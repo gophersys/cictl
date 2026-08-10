@@ -12,12 +12,27 @@ permissions:
 
 jobs:
   gate:
-    # The pool's runner image is ghcr.io/gophersys/base plus the Actions runner, so
-    # Go, gofumpt and golangci-lint are already present. No setup-go, no toolchain
-    # download, and the same versions an interactive session gets.
-    runs-on: arc-org
+    # GitHub-hosted, NOT the self-hosted arc-org pool, because this repo is public.
+    # Two reasons, and the first is a hard stop:
+    #   1. arc-org lives in the Default runner group with
+    #      allows_public_repositories=false, so a public repo's jobs queue forever
+    #      with no error and no message in the UI.
+    #   2. That pool runs a privileged dind sidecar. A fork PR would reach the node,
+    #      and therefore the cluster.
+    # Public repos get unlimited GitHub-hosted minutes, so this costs nothing.
+    # See gophersys/infrastructure docs/ci-runners.md.
+    runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Install the lint toolchain
+        run: |
+          set -euo pipefail
+          go install mvdan.cc/gofumpt@latest
+          curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh \
+            | sh -s -- -b "$(go env GOPATH)/bin" v2.12.2
       - name: ctl.sh gate
         run: bash ./ctl.sh gate
