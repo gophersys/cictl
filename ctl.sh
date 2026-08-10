@@ -50,7 +50,20 @@ function cmd_test() {
   require_cmd go
   log_info "test: go test -race ./..."
   (cd "$PROJECT_ROOT" && GOWORK=off go test -race ./...)
+  cmd_test_review
   log_success "test: OK"
+}
+
+# cmd_test_review — the guard suite for review/review.sh, the script that spawns
+# a paid agent and writes to pull requests. It runs against stub `claude` and
+# `gh` commands on a sandbox PATH, so it costs nothing and reaches no network.
+# Its second phase removes each guard in turn and requires the matching test to
+# fail, because a guard that no test can break is a guard nobody has checked.
+function cmd_test_review() {
+  require_cmd bash sed cmp env ln cp
+  log_info "test-review: review/review_test.sh (guards, then mutation proof)"
+  (cd "$PROJECT_ROOT" && bash review/review_test.sh)
+  log_success "test-review: OK"
 }
 
 function cmd_fmt() {
@@ -128,7 +141,8 @@ Usage: ./ctl.sh <command> [args...]
 
 Commands:
   build        Compile cictl (go build ./...)
-  test         Run the test suite with the race detector (go test -race ./...)
+  test         The full suite: go test -race ./... then the review guard suite
+  test-review  Only the review/review.sh guard suite (behaviour + mutation)
   fmt          Format the source (gofumpt -w .)
   vet          go vet ./...
   lint         gofumpt check + go vet + golangci-lint (shared strict config)
@@ -143,15 +157,16 @@ function main() {
   local cmd="${1:-help}"
   shift || true
   case "$cmd" in
-    build)    cmd_build   "$@" ;;
-    test)     cmd_test    "$@" ;;
-    fmt)      cmd_fmt     "$@" ;;
-    vet)      cmd_vet     "$@" ;;
-    lint)     cmd_lint    "$@" ;;
-    gate)     cmd_gate    "$@" ;;
-    install)  cmd_install "$@" ;;
-    help|"")  usage ;;
-    *)        log_error "unknown command: '$cmd'"; usage; exit 1 ;;
+    build)       cmd_build       "$@" ;;
+    test)        cmd_test        "$@" ;;
+    test-review) cmd_test_review "$@" ;;
+    fmt)         cmd_fmt         "$@" ;;
+    vet)         cmd_vet         "$@" ;;
+    lint)        cmd_lint        "$@" ;;
+    gate)        cmd_gate        "$@" ;;
+    install)     cmd_install     "$@" ;;
+    help|"")     usage ;;
+    *)           log_error "unknown command: '$cmd'"; usage; exit 1 ;;
   esac
 }
 

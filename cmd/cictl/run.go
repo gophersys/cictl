@@ -24,6 +24,15 @@ func run(args []string, rawOut, rawErr io.Writer) int {
 		return 2
 	}
 	cmd, rest := args[0], args[1:]
+	// KEEP schema and validate. A reachability pass reported both as dead. The
+	// same pass reported conformance as dead, and conformance is in fact the verb
+	// that eden/libs/.ci/ctl.sh maintains its __verbs contract for: a caller in
+	// another repository is invisible to a pass over this module, by construction.
+	// Removing them would also delete nothing, because the packages behind them
+	// stay either way: validation calls schema.Emit, and generate, drift and
+	// conformance all call validation. The saving is the switch arm; the cost is a
+	// silently broken consumer. validate is also the only way to check a contract
+	// without a side effect — generate writes files and drift compares them.
 	switch cmd {
 	case "schema":
 		return cmdSchema(rest, out, errOut)
