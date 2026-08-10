@@ -16,7 +16,6 @@ set -Eeuo pipefail
 IFS=$'\n\t'
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-REPO_ROOT="$(git -C "$PROJECT_ROOT" rev-parse --show-toplevel 2>/dev/null || echo "$PROJECT_ROOT")"
 GOLANGCI_CONFIG="${PROJECT_ROOT}/.golangci.yml"   # vendored at extraction; see the header in that file
 
 # -------- logging --------
@@ -69,7 +68,7 @@ function cmd_vet() {
 }
 
 function cmd_lint() {
-  require_cmd go gofumpt golangci-lint
+  require_cmd go gofumpt golangci-lint shellcheck
   log_info "lint: gofumpt -l ."
   local unformatted
   unformatted="$(cd "$PROJECT_ROOT" && gofumpt -l .)"
@@ -78,6 +77,22 @@ function cmd_lint() {
     printf '  %s\n' "$unformatted" >&2
     exit 1
   fi
+  # This repo ships shell as well as Go: ctl.sh itself and review/review.sh, which
+  # runs the pull request review agent. An unlinted script is how a defect reaches
+  # 20 repositories at once, because review/ is shared by all of them.
+  log_info "lint: shellcheck (full strictness)"
+  # No mapfile: bash 3.2 on macOS does not have it, and this verb must run on a
+  # workstation as well as in the runner image.
+  local sh_count
+  sh_count="$(cd "$PROJECT_ROOT" && find . -name '*.sh' -not -path './.git/*' | wc -l | tr -d ' ')"
+  if [[ "$sh_count" -eq 0 ]]; then
+    log_error "no shell scripts found; the discovery is broken, not the repo"
+    exit 1
+  fi
+  log_info "lint: ${sh_count} shell script(s)"
+  (cd "$PROJECT_ROOT" && find . -name '*.sh' -not -path './.git/*' -print0 \
+     | xargs -0 shellcheck)
+
   log_info "lint: go vet ./..."
   (cd "$PROJECT_ROOT" && GOWORK=off go vet ./...)
   log_info "lint: golangci-lint run (shared strict config)"
