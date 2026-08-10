@@ -15,10 +15,10 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/gophersys/eden/tools/cictl/internal/cirepo"
-	"github.com/gophersys/eden/tools/cictl/internal/contract"
-	"github.com/gophersys/eden/tools/cictl/internal/failure"
-	"github.com/gophersys/eden/tools/cictl/internal/validation"
+	"github.com/gophersys/cictl/internal/cirepo"
+	"github.com/gophersys/cictl/internal/contract"
+	"github.com/gophersys/cictl/internal/failure"
+	"github.com/gophersys/cictl/internal/validation"
 )
 
 // Report is the conformance outcome: the gaps found (empty means conformant).
@@ -89,9 +89,9 @@ func Check(repoDir string) Report {
 		}
 	}
 
-	// 5. declared image is known (semantic validation also covers this; repeated
-	// here so a conformance run is self-contained and the message is image-specific).
-	if !knownImage(c.Image) {
+	// 5. declared image is known, but only when the runner actually uses one.
+	// A self-hosted pool names no image: its runner image is the toolchain.
+	if c.Runner.Container && !knownImage(c.Image) {
 		gaps = append(gaps, fmt.Sprintf("unknown image %q", c.Image))
 	}
 

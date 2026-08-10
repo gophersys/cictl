@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/gophersys/eden/tools/cictl/internal/affected"
+	"github.com/gophersys/cictl/internal/affected"
 )
 
 // gitRepo builds a throwaway git repository in t.TempDir with two project dirs

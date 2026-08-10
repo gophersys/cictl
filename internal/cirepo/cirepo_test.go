@@ -5,8 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/gophersys/eden/tools/cictl/internal/cirepo"
-	"github.com/gophersys/eden/tools/cictl/internal/contract"
+	"github.com/gophersys/cictl/internal/cirepo"
+	"github.com/gophersys/cictl/internal/contract"
 )
 
 func newContract() *contract.Contract {

@@ -5,12 +5,15 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/gophersys/eden/tools/cictl/internal/contract"
+	"github.com/gophersys/cictl/internal/contract"
 )
 
 const sample = `apiVersion: eden.ci/v1
 repo: libs
 kind: libraries
+runner:
+  runsOn: ubuntu-latest
+  container: true
 image: ghcr.io/gophersys/base
 languages: [go, typescript]
 tiers:

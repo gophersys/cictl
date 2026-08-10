@@ -20,7 +20,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/gophersys/eden/tools/cictl/internal/failure"
+	"github.com/gophersys/cictl/internal/failure"
 )
 
 // Pin is one parsed version pin.

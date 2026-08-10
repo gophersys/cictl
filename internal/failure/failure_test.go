@@ -4,7 +4,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/gophersys/eden/tools/cictl/internal/failure"
+	"github.com/gophersys/cictl/internal/failure"
 )
 
 var errSentinel = errors.New("root cause")

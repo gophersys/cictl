@@ -13,7 +13,7 @@ package contract
 import (
 	"os"
 
-	"github.com/gophersys/eden/tools/cictl/internal/failure"
+	"github.com/gophersys/cictl/internal/failure"
 	"gopkg.in/yaml.v3"
 )
 
@@ -31,9 +31,12 @@ type Contract struct {
 	Repo string `json:"repo" yaml:"repo" jsonschema:"minLength=1,description=Short repository identifier"`
 	// Kind classifies the repository so a provider can pick sensible defaults.
 	Kind Kind `json:"kind" yaml:"kind"`
-	// Image is the container image every tier job runs inside. One of the known
-	// Eden images.
-	Image Image `json:"image" yaml:"image"`
+	// Runner declares where a tier's jobs execute.
+	Runner Runner `json:"runner" yaml:"runner"`
+	// Image is the container image every tier job runs inside. Required only when
+	// Runner.Container is set; a self-hosted pool's runner image already carries
+	// the toolchain, so there is nothing to put in a container.
+	Image Image `json:"image,omitempty" yaml:"image,omitempty"`
 	// Languages lists the ecosystems present in the repo (drives nothing structural
 	// yet; it is contract metadata the updatability matrix and humans read).
 	Languages []Language `json:"languages" yaml:"languages" jsonschema:"minItems=1,uniqueItems=true"`
@@ -43,6 +46,25 @@ type Contract struct {
 	Providers []Provider `json:"providers" yaml:"providers" jsonschema:"minItems=1,uniqueItems=true"`
 	// ToolMatrix declares where pinned tool versions are read from.
 	ToolMatrix ToolMatrix `json:"toolMatrix" yaml:"toolMatrix"`
+}
+
+// Runner declares where a tier's jobs execute. It exists because the runner was
+// once hardcoded to ubuntu-latest, which is why the only repo that adopted this
+// contract failed 100 consecutive runs: its jobs never reached the self-hosted
+// fleet, and the container image they wanted was a private package that
+// GITHUB_TOKEN cannot pull.
+//
+// RunsOn is a free string, deliberately not an enum. Pools are added for physical
+// capability — an architecture, a USB-attached board, a different kernel — and
+// adding one must never require changing this code.
+type Runner struct {
+	// RunsOn is emitted verbatim as the job's `runs-on:` value.
+	RunsOn string `json:"runsOn" yaml:"runsOn" jsonschema:"minLength=1,description=The runs-on value; a GitHub-hosted label or a self-hosted pool"`
+	// Container runs each job inside Image. Leave false for a self-hosted pool
+	// whose runner image already carries the toolchain: a container block there
+	// re-pays a cold image pull on every job (measured at over five minutes for
+	// these images) because the pull happens inside the ephemeral pod.
+	Container bool `json:"container" yaml:"container" jsonschema:"description=Run jobs inside Image; false for a self-hosted pool that already carries the toolchain"`
 }
 
 // Kind is the repository classification enum.

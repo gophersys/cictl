@@ -62,7 +62,9 @@ func TestRun_SchemaToFile(t *testing.T) {
 const goodContract = `apiVersion: eden.ci/v1
 repo: demo
 kind: libraries
-image: ghcr.io/gophersys/base
+runner:
+  runsOn: arc-org
+  container: false
 languages: [go]
 tiers:
   pr: {verbs: [fast], timeoutMinutes: 15}
@@ -137,7 +139,9 @@ func TestRun_GenerateRefusesInvalidContract(t *testing.T) {
 	bad := `apiVersion: eden.ci/v1
 repo: demo
 kind: libraries
-image: ghcr.io/gophersys/base
+runner:
+  runsOn: arc-org
+  container: false
 languages: [go]
 tiers:
   pr: {verbs: [fast]}

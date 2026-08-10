@@ -15,7 +15,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/gophersys/eden/tools/cictl/internal/contract"
+	"github.com/gophersys/cictl/internal/contract"
 )
 
 // ErrNoGithubProvider is returned by Render when the contract does not declare
@@ -66,23 +66,27 @@ func renderOnPR(c *contract.Contract) string {
 	b.WriteString("permissions:\n  contents: read\n  packages: read\n\n")
 	b.WriteString("jobs:\n")
 	writeJob(&b, &jobSpec{
-		id:      "pr",
-		name:    fmt.Sprintf("pr tier (%s)", strings.Join(c.Tiers.Pr.Verbs, ", ")),
-		image:   string(c.Image),
-		tier:    c.Tiers.Pr,
-		nxBase:  "origin/${{ github.base_ref }}",
-		needs:   "",
-		comment: "The fast lane: the pr-tier verbs over the affected projects. No real substrate.",
+		id:        "pr",
+		name:      fmt.Sprintf("pr tier (%s)", strings.Join(c.Tiers.Pr.Verbs, ", ")),
+		runsOn:    c.Runner.RunsOn,
+		container: c.Runner.Container,
+		image:     string(c.Image),
+		tier:      c.Tiers.Pr,
+		nxBase:    "origin/${{ github.base_ref }}",
+		needs:     "",
+		comment:   "The fast lane: the pr-tier verbs over the affected projects. No real substrate.",
 	})
 	b.WriteString("\n")
 	writeJob(&b, &jobSpec{
-		id:      "merge",
-		name:    fmt.Sprintf("merge tier (%s)", strings.Join(c.Tiers.Merge.Verbs, ", ")),
-		image:   string(c.Image),
-		tier:    c.Tiers.Merge,
-		nxBase:  "origin/${{ github.base_ref }}",
-		needs:   "pr",
-		comment: "The careful-orchestration lane: the merge-tier verbs on the real substrate before merge.",
+		id:        "merge",
+		name:      fmt.Sprintf("merge tier (%s)", strings.Join(c.Tiers.Merge.Verbs, ", ")),
+		runsOn:    c.Runner.RunsOn,
+		container: c.Runner.Container,
+		image:     string(c.Image),
+		tier:      c.Tiers.Merge,
+		nxBase:    "origin/${{ github.base_ref }}",
+		needs:     "pr",
+		comment:   "The careful-orchestration lane: the merge-tier verbs on the real substrate before merge.",
 	})
 	return b.String()
 }
@@ -98,13 +102,15 @@ func renderOnPush(c *contract.Contract) string {
 	b.WriteString("permissions:\n  contents: read\n  packages: read\n\n")
 	b.WriteString("jobs:\n")
 	writeJob(&b, &jobSpec{
-		id:      "pr",
-		name:    fmt.Sprintf("pr tier (%s)", strings.Join(c.Tiers.Pr.Verbs, ", ")),
-		image:   string(c.Image),
-		tier:    c.Tiers.Pr,
-		nxBase:  "origin/main~1",
-		needs:   "",
-		comment: "Post-merge re-check: the pr-tier verbs over what the push changed.",
+		id:        "pr",
+		name:      fmt.Sprintf("pr tier (%s)", strings.Join(c.Tiers.Pr.Verbs, ", ")),
+		runsOn:    c.Runner.RunsOn,
+		container: c.Runner.Container,
+		image:     string(c.Image),
+		tier:      c.Tiers.Pr,
+		nxBase:    "origin/main~1",
+		needs:     "",
+		comment:   "Post-merge re-check: the pr-tier verbs over what the push changed.",
 	})
 	return b.String()
 }
@@ -122,13 +128,15 @@ func renderNightly(c *contract.Contract) string {
 	b.WriteString("permissions:\n  contents: read\n  packages: read\n\n")
 	b.WriteString("jobs:\n")
 	writeJob(&b, &jobSpec{
-		id:      "nightly",
-		name:    fmt.Sprintf("nightly tier (%s)", strings.Join(c.Tiers.Nightly.Verbs, ", ")),
-		image:   string(c.Image),
-		tier:    c.Tiers.Nightly,
-		nxBase:  "origin/main~1",
-		needs:   "",
-		comment: "The exhaustive lane: every nightly-tier verb on the full substrate, on a schedule.",
+		id:        "nightly",
+		name:      fmt.Sprintf("nightly tier (%s)", strings.Join(c.Tiers.Nightly.Verbs, ", ")),
+		runsOn:    c.Runner.RunsOn,
+		container: c.Runner.Container,
+		image:     string(c.Image),
+		tier:      c.Tiers.Nightly,
+		nxBase:    "origin/main~1",
+		needs:     "",
+		comment:   "The exhaustive lane: every nightly-tier verb on the full substrate, on a schedule.",
 	})
 	return b.String()
 }
@@ -136,13 +144,15 @@ func renderNightly(c *contract.Contract) string {
 // jobSpec is the resolved input to writeJob — everything one job needs, already
 // derived from the contract so writeJob is a pure formatter.
 type jobSpec struct {
-	id      string
-	name    string
-	image   string
-	tier    contract.Tier
-	nxBase  string
-	needs   string
-	comment string
+	id        string
+	name      string
+	runsOn    string
+	container bool
+	image     string
+	tier      contract.Tier
+	nxBase    string
+	needs     string
+	comment   string
 }
 
 // writeJob emits one GitHub Actions job block. A tier with a non-empty substrate
@@ -154,7 +164,7 @@ func writeJob(b *strings.Builder, j *jobSpec) {
 	fmt.Fprintf(b, "%s# %s\n", indent, j.comment)
 	fmt.Fprintf(b, "%s%s:\n", indent, j.id)
 	fmt.Fprintf(b, "%s%sname: %s\n", indent, indent, yamlStr(j.name))
-	fmt.Fprintf(b, "%s%sruns-on: ubuntu-latest\n", indent, indent)
+	fmt.Fprintf(b, "%s%sruns-on: %s\n", indent, indent, j.runsOn)
 	if j.needs != "" {
 		fmt.Fprintf(b, "%s%sneeds: %s\n", indent, indent, j.needs)
 	}
@@ -162,15 +172,21 @@ func writeJob(b *strings.Builder, j *jobSpec) {
 		fmt.Fprintf(b, "%s%stimeout-minutes: %d\n", indent, indent, j.tier.TimeoutMinutes)
 	}
 
-	// container block
-	fmt.Fprintf(b, "%s%scontainer:\n", indent, indent)
-	fmt.Fprintf(b, "%s%s%simage: %s:latest\n", indent, indent, indent, j.image)
-	fmt.Fprintf(b, "%s%s%scredentials:\n", indent, indent, indent)
-	fmt.Fprintf(b, "%s%s%s%susername: ${{ github.actor }}\n", indent, indent, indent, indent)
-	fmt.Fprintf(b, "%s%s%s%spassword: ${{ secrets.GITHUB_TOKEN }}\n", indent, indent, indent, indent)
+	// Container block — only when the contract asks for one. A self-hosted pool
+	// whose runner image already carries the toolchain must NOT get one: the pull
+	// would happen inside the ephemeral pod and be re-paid on every job, and
+	// GITHUB_TOKEN cannot pull a private package (403) without a per-repository
+	// grant that GitHub exposes only in its UI.
 	substrate := len(j.tier.Substrate) > 0
-	if substrate {
-		fmt.Fprintf(b, "%s%s%soptions: --privileged -v /var/run/docker.sock:/var/run/docker.sock\n", indent, indent, indent)
+	if j.container {
+		fmt.Fprintf(b, "%s%scontainer:\n", indent, indent)
+		fmt.Fprintf(b, "%s%s%simage: %s:latest\n", indent, indent, indent, j.image)
+		fmt.Fprintf(b, "%s%s%scredentials:\n", indent, indent, indent)
+		fmt.Fprintf(b, "%s%s%s%susername: ${{ github.actor }}\n", indent, indent, indent, indent)
+		fmt.Fprintf(b, "%s%s%s%spassword: ${{ secrets.GITHUB_TOKEN }}\n", indent, indent, indent, indent)
+		if substrate {
+			fmt.Fprintf(b, "%s%s%soptions: --privileged -v /var/run/docker.sock:/var/run/docker.sock\n", indent, indent, indent)
+		}
 	}
 
 	// steps

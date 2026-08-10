@@ -8,8 +8,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/gophersys/eden/tools/cictl/internal/contract"
-	"github.com/gophersys/eden/tools/cictl/internal/failure"
+	"github.com/gophersys/cictl/internal/contract"
+	"github.com/gophersys/cictl/internal/failure"
 )
 
 // Divergence is one drift finding: a destination whose on-disk content does not

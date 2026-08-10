@@ -8,8 +8,8 @@ import (
 	"bytes"
 	"encoding/json"
 
-	"github.com/gophersys/eden/tools/cictl/internal/contract"
-	"github.com/gophersys/eden/tools/cictl/internal/failure"
+	"github.com/gophersys/cictl/internal/contract"
+	"github.com/gophersys/cictl/internal/failure"
 	"github.com/invopop/jsonschema"
 )
 

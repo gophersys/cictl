@@ -4,14 +4,16 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gophersys/eden/tools/cictl/internal/validation"
+	"github.com/gophersys/cictl/internal/validation"
 )
 
 // goodContract is the canonical valid instance the table mutates per-case.
 const goodContract = `apiVersion: eden.ci/v1
 repo: libs
 kind: libraries
-image: ghcr.io/gophersys/base
+runner:
+  runsOn: arc-org
+  container: false
 languages: [go, typescript]
 tiers:
   pr:
@@ -66,9 +68,32 @@ func TestValidate_RejectsMalformed(t *testing.T) {
 			wantSub: "substrate",
 		},
 		{
-			name:    "unknown image",
-			yaml:    strings.Replace(goodContract, "ghcr.io/gophersys/base", "ghcr.io/evil/x", 1),
-			wantSub: "image",
+			// Container mode still demands a known image.
+			name: "unknown image in container mode",
+			yaml: strings.Replace(goodContract,
+				"runner:\n  runsOn: arc-org\n  container: false\n",
+				"runner:\n  runsOn: ubuntu-latest\n  container: true\nimage: ghcr.io/evil/x\n", 1),
+			wantSub: "unknown image",
+		},
+		{
+			// Container mode without an image has nothing to run in.
+			name: "container mode without an image",
+			yaml: strings.Replace(goodContract,
+				"runner:\n  runsOn: arc-org\n  container: false\n",
+				"runner:\n  runsOn: ubuntu-latest\n  container: true\n", 1),
+			wantSub: "required when runner.container is true",
+		},
+		{
+			// An image on a self-hosted pool is dead configuration that reads as
+			// intent: the pool's runner image already carries the toolchain.
+			name:    "image declared on a self-hosted pool",
+			yaml:    strings.Replace(goodContract, "  container: false\n", "  container: false\nimage: ghcr.io/gophersys/base\n", 1),
+			wantSub: "must be empty",
+		},
+		{
+			name:    "empty runsOn",
+			yaml:    strings.Replace(goodContract, "  runsOn: arc-org\n", "  runsOn: \"\"\n", 1),
+			wantSub: "runsOn",
 		},
 		{
 			name:    "empty pr verbs",

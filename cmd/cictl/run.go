@@ -5,12 +5,12 @@ import (
 	"io"
 	"os"
 
-	"github.com/gophersys/eden/tools/cictl/internal/affected"
-	"github.com/gophersys/eden/tools/cictl/internal/cirepo"
-	"github.com/gophersys/eden/tools/cictl/internal/conformance"
-	"github.com/gophersys/eden/tools/cictl/internal/schema"
-	"github.com/gophersys/eden/tools/cictl/internal/updatability"
-	"github.com/gophersys/eden/tools/cictl/internal/validation"
+	"github.com/gophersys/cictl/internal/affected"
+	"github.com/gophersys/cictl/internal/cirepo"
+	"github.com/gophersys/cictl/internal/conformance"
+	"github.com/gophersys/cictl/internal/schema"
+	"github.com/gophersys/cictl/internal/updatability"
+	"github.com/gophersys/cictl/internal/validation"
 )
 
 // run is the testable entry point: it returns the process exit code, writing

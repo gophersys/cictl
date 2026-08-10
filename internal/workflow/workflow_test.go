@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gophersys/eden/tools/cictl/internal/contract"
-	"github.com/gophersys/eden/tools/cictl/internal/workflow"
+	"github.com/gophersys/cictl/internal/contract"
+	"github.com/gophersys/cictl/internal/workflow"
 )
 
 func sampleContract() *contract.Contract {
@@ -14,8 +14,12 @@ func sampleContract() *contract.Contract {
 		APIVersion: contract.APIVersion,
 		Repo:       "libs",
 		Kind:       contract.KindLibraries,
-		Image:      contract.ImageBase,
-		Languages:  []contract.Language{contract.LanguageGo, contract.LanguageTypeScript},
+		// The GitHub-hosted + container mode. Stated explicitly rather than left to
+		// the zero value, so a test that asserts container behavior cannot silently
+		// start asserting self-hosted behavior. selfHostedContract() is the other mode.
+		Runner:    contract.Runner{RunsOn: "ubuntu-latest", Container: true},
+		Image:     contract.ImageBase,
+		Languages: []contract.Language{contract.LanguageGo, contract.LanguageTypeScript},
 		Tiers: contract.Tiers{
 			Pr:    contract.Tier{Verbs: []string{"affected-gate-fast"}, TimeoutMinutes: 15},
 			Merge: contract.Tier{Verbs: []string{"affected-gate-substrate"}, Substrate: []contract.Substrate{contract.SubstrateDocker, contract.SubstrateK3d}, Privileged: true, TimeoutMinutes: 30},
@@ -187,4 +191,94 @@ func splitJobs(t *testing.T, onpr string) (pr, merge string) {
 		t.Fatalf("on-pr has no merge job:\n%s", onpr)
 	}
 	return onpr[:idx], onpr[idx:]
+}
+
+// selfHostedContract is sampleContract moved onto a self-hosted pool whose runner
+// image already carries the toolchain.
+func selfHostedContract() *contract.Contract {
+	c := sampleContract()
+	c.Runner = contract.Runner{RunsOn: "arc-org"}
+	c.Image = ""
+	return c
+}
+
+// TestRender_RunsOnFromContract asserts the runner is contract-driven rather than
+// hardcoded. Hardcoding ubuntu-latest is what made the only adopting repo fail
+// 100 consecutive runs: its jobs never reached the self-hosted fleet.
+func TestRender_RunsOnFromContract(t *testing.T) {
+	t.Parallel()
+	files, err := workflow.Render(selfHostedContract())
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	for _, f := range files {
+		s := string(f.Content)
+		if !strings.Contains(s, "runs-on: arc-org") {
+			t.Errorf("%s: want `runs-on: arc-org`, got:\n%s", f.Name, s)
+		}
+		if strings.Contains(s, "ubuntu-latest") {
+			t.Errorf("%s: still emits the hardcoded ubuntu-latest", f.Name)
+		}
+	}
+}
+
+// TestRender_SelfHostedOmitsContainer asserts no container block is emitted for a
+// self-hosted pool. The pool's runner image IS the toolchain, so a container
+// block would re-pay a cold image pull on every job — measured at 5m17s — and
+// would authenticate to a private package with GITHUB_TOKEN, which returns 403.
+func TestRender_SelfHostedOmitsContainer(t *testing.T) {
+	t.Parallel()
+	files, err := workflow.Render(selfHostedContract())
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	for _, f := range files {
+		s := string(f.Content)
+		for _, forbidden := range []string{"container:", "credentials:", "secrets.GITHUB_TOKEN"} {
+			if strings.Contains(s, forbidden) {
+				t.Errorf("%s: self-hosted job must not emit %q:\n%s", f.Name, forbidden, s)
+			}
+		}
+	}
+}
+
+// TestRender_ContainerWhenRequested asserts the container path still works, so a
+// GitHub-hosted runner can keep using an image.
+func TestRender_ContainerWhenRequested(t *testing.T) {
+	t.Parallel()
+	c := sampleContract()
+	c.Runner = contract.Runner{RunsOn: "ubuntu-latest", Container: true}
+	files, err := workflow.Render(c)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	for _, f := range files {
+		s := string(f.Content)
+		if !strings.Contains(s, "container:") {
+			t.Errorf("%s: want a container block when Container is true:\n%s", f.Name, s)
+		}
+		if !strings.Contains(s, "runs-on: ubuntu-latest") {
+			t.Errorf("%s: want runs-on: ubuntu-latest", f.Name)
+		}
+	}
+}
+
+// TestRender_SubstrateWithoutContainerStillStartsDocker asserts a substrate tier
+// on a self-hosted pool keeps its dockerd bootstrap. The pool provides docker via
+// a dind sidecar, but the step must survive the container block being dropped.
+func TestRender_SubstrateWithoutContainerStillStartsDocker(t *testing.T) {
+	t.Parallel()
+	files, err := workflow.Render(selfHostedContract())
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	var body string
+	for _, f := range files {
+		if f.Name == "on-pr.yml" {
+			body = string(f.Content)
+		}
+	}
+	if !strings.Contains(body, "Start docker host") {
+		t.Errorf("on-pr.yml: substrate tier lost its docker bootstrap:\n%s", body)
+	}
 }

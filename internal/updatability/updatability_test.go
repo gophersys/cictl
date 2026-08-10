@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/gophersys/eden/tools/cictl/internal/updatability"
+	"github.com/gophersys/cictl/internal/updatability"
 )
 
 func write(t *testing.T, dir, rel, content string) {

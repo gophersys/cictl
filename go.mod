@@ -1,4 +1,4 @@
-module github.com/gophersys/eden/tools/cictl
+module github.com/gophersys/cictl
 
 go 1.26
 

@@ -1,0 +1,23 @@
+# HAND-WRITTEN, deliberately. cictl does not generate its own workflow: that would
+# make the tool that gates the build a product of the build it gates. This is the
+# only such exception, and it is why it is small.
+name: ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  gate:
+    # The pool's runner image is ghcr.io/gophersys/base plus the Actions runner, so
+    # Go, gofumpt and golangci-lint are already present. No setup-go, no toolchain
+    # download, and the same versions an interactive session gets.
+    runs-on: arc-org
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: ctl.sh gate
+        run: bash ./ctl.sh gate

@@ -17,7 +17,7 @@ IFS=$'\n\t'
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(git -C "$PROJECT_ROOT" rev-parse --show-toplevel 2>/dev/null || echo "$PROJECT_ROOT")"
-GOLANGCI_CONFIG="$REPO_ROOT/libs/.golangci.yml"
+GOLANGCI_CONFIG="${PROJECT_ROOT}/.golangci.yml"   # vendored at extraction; see the header in that file
 
 # -------- logging --------
 function log_info()    { printf '\033[0;36m[info]\033[0m  %s\n' "$*"; }

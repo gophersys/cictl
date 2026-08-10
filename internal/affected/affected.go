@@ -11,7 +11,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/gophersys/eden/tools/cictl/internal/failure"
+	"github.com/gophersys/cictl/internal/failure"
 )
 
 // Projects lists the project roots (repo-relative, slash-separated, sorted) whose

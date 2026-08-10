@@ -5,13 +5,15 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/gophersys/eden/tools/cictl/internal/conformance"
+	"github.com/gophersys/cictl/internal/conformance"
 )
 
 const canonicalContract = `apiVersion: eden.ci/v1
 repo: demo
 kind: libraries
-image: ghcr.io/gophersys/base
+runner:
+  runsOn: arc-org
+  container: false
 languages: [go]
 tiers:
   pr:

@@ -1,0 +1,316 @@
+# golangci-lint v2 — the strict gate for this module.
+#
+# Vendored from gophersys/libs/.golangci.yml when cictl was extracted from the
+# Eden monorepo. Before extraction, ctl.sh reached up the tree into
+# `libs/.golangci.yml`; a standalone repo has no such tree, so the gate failed
+# closed the moment the tool was moved. Owning the config is the correct end
+# state for an extracted tool — but it does mean this file no longer tracks the
+# libs copy automatically. Re-sync deliberately when that one changes.
+#
+# This is Layer 1 of ADR-0018 ("the teeth"): the deterministic gate that makes
+# non-conformant library code mechanically un-committable. Each linter below is
+# annotated with the canon rule it enforces (citations: ADR-0018; 10 = the
+# Library System doc, §5 HNS-1 naming, §9 interface/error discipline).
+#
+# Principle: do NOT weaken a rule to make code pass — fix the code. A rule is
+# relaxed here only where it is genuinely wrong-for-contract, and the reason is
+# recorded inline.
+version: "2"
+
+run:
+  # Lint test files too — test hygiene (paralleltest/tparallel/thelper/
+  # testpackage) and the HNS-1 banned-token gate (forbidigo) must cover *_test.go,
+  # because the cfgtest naming break that ADR-0018 cites lived in test imports.
+  tests: true
+
+linters:
+  # Start from a curated set, not "all": every linter here is deliberate and
+  # mapped to a canon rule. `default: none` makes the enabled list exhaustive.
+  default: none
+  enable:
+    # --- Interface / API discipline (10 §9) ---------------------------------
+    - interfacebloat   # ≤5-method interface rule (10 §9): small, composable ports.
+    - ireturn          # accept interfaces, return concrete (10 §9).
+
+    # --- Error model: "no swallowed errors" (the errors contract; C24) -------
+    - errcheck         # every returned error is checked — none silently dropped.
+    - wrapcheck        # errors crossing a package boundary are wrapped, not bare.
+    - errorlint        # use %w + errors.Is/As(Type); no == or %v on wrapped errors.
+    - err113           # no dynamic errors.New/fmt.Errorf at call sites; use the model.
+    - errname          # sentinel vars are Err*, error types are *Error (errors §).
+    - nilerr           # never return nil after checking err != nil.
+    - nilnil           # never return (nil, nil) — an invalid value with no error.
+
+    # --- HNS-1 naming gate (10 §5) ------------------------------------------
+    - forbidigo        # the banned-token gate: cfg/config/deps/k8s/… as identifiers.
+
+    # --- Import boundaries: hexagonal leaf libraries (P1/E1, 10 §6.1) -------
+    - depguard         # leaf libs import stdlib + sibling pattern libs only.
+
+    # --- Security / SAST (ADR-0020 §f) --------------------------------------
+    - gosec            # SAST: ride the existing lint lane (the `ctl.sh sast` verb runs the
+                       #       standalone gosec too; here it is also part of `lint` so a
+                       #       high/medium finding blocks the inner loop). Curated-set
+                       #       discipline preserved: gosec is the one SAST linter, annotated.
+
+    # --- Correctness + naming + doc-comment discipline ----------------------
+    - revive           # exported-symbol doc comments, naming, receiver consistency.
+    - staticcheck      # the staticcheck corpus (also subsumes gosimple in v2).
+    - unused           # no dead code (unused funcs/vars/types/fields).
+    - ineffassign      # no ineffectual assignments.
+    - gocritic         # opinionated bug/performance/style diagnostics.
+    - predeclared      # never shadow predeclared identifiers (new, len, error, …).
+
+    # --- Complexity bounds (keep functions inspectable) ---------------------
+    - cyclop           # cyclomatic complexity ceiling per function/package.
+    - gocognit         # cognitive complexity ceiling — readability, not just branches.
+
+    # --- Enum / switch completeness -----------------------------------------
+    - exhaustive       # enum-switch completeness (e.g. errors.Kind switches).
+
+    # --- Test hygiene (08 §3) -----------------------------------------------
+    - testpackage      # tests live in package x_test (black-box, contract-first).
+    - tparallel        # correct t.Parallel() use; no parallel/serial conflicts.
+    - paralleltest     # tests opt into t.Parallel() — fast, isolation-honest suites.
+    - thelper          # test helpers call t.Helper() so failures point at the caller.
+
+    # --- Package hygiene -----------------------------------------------------
+    - gochecknoinits   # no init() — construction goes through New(configuration, deps).
+    - misspell         # no misspelled English in comments/strings.
+    - godot            # doc comments (top-level declarations) end in a period.
+    - whitespace       # no leading/trailing blank lines in blocks.
+
+  settings:
+    interfacebloat:
+      # 10 §9: an interface may declare at most 5 methods. Above that, split it.
+      max: 5
+
+    ireturn:
+      # Accept interfaces, return concrete (10 §9). Allow the unavoidable
+      # interface returns: the universal `error`, the empty interface, generic
+      # type parameters (a returned `T` is concrete to the caller), and stdlib
+      # types that are interfaces by design (e.g. context.Context, io.Reader).
+      allow:
+        - error
+        - empty
+        - anon
+        - generic
+        - stdlib
+
+    errcheck:
+      # Checking type assertions and blank-identifier assignments closes the two
+      # quietest error-swallowing holes.
+      check-type-assertions: true
+      check-blank: true
+
+    wrapcheck:
+      # The Eden errors model wraps via this package; treat its constructors as
+      # the wrapping boundary so wrapcheck does not demand re-wrapping our own
+      # already-wrapped errors.
+      ignore-sigs:
+        - .Wrap(
+        - .Wrapf(
+        - errors.New(
+        - errors.Wrap(
+        - errors.WithCode(
+        - errors.WithField(
+
+    errorlint:
+      errorf: true          # fmt.Errorf must use %w (not %v/%s) for a wrapped error.
+      asserts: true         # forbid err.(*T); use errors.As / AsType.
+      comparison: true      # forbid err == target; use errors.Is.
+
+    forbidigo:
+      # The HNS-1 banned-token gate (10 §5; ADR-0018). Reject the abbreviation
+      # and the banned-outright tokens as IDENTIFIERS *and* import aliases — this
+      # is the rule that rejects `cfgtest`/`cfg` the instant it is written
+      # (ADR-0018's named failure). forbidigo matches the source text of an
+      # identifier/selector, so `\bcfg\b` catches the alias `cfg` in `cfg.New`
+      # AND a bare `cfg` variable. `analyze-types` is deliberately LEFT OFF: it
+      # resolves an alias back to its real package (`cfg` -> `configuration`)
+      # before matching, which would silently defeat the alias gate — the exact
+      # `cfgtest`/`cfg` break this rule exists to stop.
+      forbid:
+        - pattern: '\bcfg\b'
+          msg: 'HNS-1 (10 §5): write "configuration", never "cfg". Banned as identifier/alias.'
+        # `config` as a *name* is banned (the pattern slug is `configuration`),
+        # but the idiomatic exported Go *type* name `Config` is exempt (10 §5).
+        # Match lowercase `config` as a word; the capitalized type name `Config`
+        # is not matched by this lowercase-anchored pattern.
+        - pattern: '\bconfig\b'
+          msg: 'HNS-1 (10 §5): write "configuration", never "config" as a name (exported type Config is exempt).'
+        - pattern: '\bdeps\b'
+          msg: 'HNS-1 (10 §5): write "dependencies", never "deps" (exported type Deps is exempt).'
+        - pattern: '\bk8s\b'
+          msg: 'HNS-1 (10 §5): write "kubernetes", never "k8s".'
+        - pattern: '\bmgmt\b'
+          msg: 'HNS-1 (10 §5): write "management", never "mgmt".'
+        - pattern: '\bobsv\b'
+          msg: 'HNS-1 (10 §5): write "observability", never "obsv".'
+        - pattern: '\bo11y\b'
+          msg: 'HNS-1 (10 §5): write "observability", never "o11y".'
+        - pattern: '\bgolang\b'
+          msg: 'HNS-1 (10 §5): write "go", never "golang".'
+        # 1:1 MIRROR of hnslint's structural banned-token set, completing the pair
+        # so the two enforcers agree on the SAME token set (the founder ruling,
+        # 2026-06-15). These are the lowercase identifier/alias forms — exactly the
+        # `Config`/`Deps`-style entries above: a word-boundary lowercase pattern
+        # that catches the banned token used AS A NAME (a local/field/alias) while
+        # the idiomatic CAPITALIZED identifier is left to hnslint's
+        # banned-exported-identifier check (which distinguishes a bare `Store` from
+        # a meaningful compound `ObjectStore`, and bans the spine-type outliers
+        # `Configuration`/`Dependencies`). Lowercase anchoring also spares the
+        # stdlib `atomic.Store` method (capitalized) and a third-party `secret.Auth`
+        # selector — neither is a lowercase Eden name.
+        - pattern: '\bauth\b'
+          msg: 'HNS-1 (10 §5): write "identity", never "auth" as a name.'
+        - pattern: '\bdb\b'
+          msg: 'HNS-1 (10 §5): write "persistence", never "db" as a name.'
+        - pattern: '\brepo\b'
+          msg: 'HNS-1 (10 §5): write "repository"/"persistence", never "repo" as a name.'
+        - pattern: '\bstore\b'
+          msg: 'HNS-1 (10 §5): write "persistence" or a meaningful compound (objectStore/desiredStore), never a bare "store" as a name.'
+        - pattern: '\bts\b'
+          msg: 'HNS-1 (10 §5): write "typescript", never "ts" as a name.'
+        - pattern: '\bcore\b'
+          msg: 'HNS-1 (10 §5): "core" is banned outright — name the actual pattern.'
+        - pattern: '\butil\b'
+          msg: 'HNS-1 (10 §5): "util" is banned outright — name the actual pattern.'
+        - pattern: '\butils\b'
+          msg: 'HNS-1 (10 §5): "utils" is banned outright — name the actual pattern.'
+        - pattern: '\bcommon\b'
+          msg: 'HNS-1 (10 §5): "common" is banned outright — name the actual pattern.'
+        - pattern: '\bmisc\b'
+          msg: 'HNS-1 (10 §5): "misc" is banned outright — name the actual pattern.'
+      # Allow the banned tokens only where unavoidable: inside string/struct-tag
+      # literals (telemetry keys, error text, JSON field names) — not identifiers.
+      exclude-godoc-examples: false
+
+    depguard:
+      # P1/E1 import boundaries (ADR-0018; 10 §6.1): a leaf pattern library may
+      # import the standard library and its SIBLING pattern libraries only. Any
+      # other third-party import is forbidden here — a vendor SDK is allowed only
+      # inside a named adapter package, which these leaf libs do not yet have. If
+      # a contract later names a specific dependency, add it to `allow` with a
+      # comment citing the contract; do not open the gate wholesale.
+      rules:
+        # Production code: the strict boundary. Scoped to NON-test Go so the
+        # test-taxonomy rule below can permit the sanctioned test-only tools without
+        # widening the production allow-list.
+        libs:
+          files:
+            - '!$test'
+          list-mode: lax        # stdlib is allowed by default; only deny third-party.
+          allow:
+            - $gostd
+            - github.com/gophersys/libs/go
+          deny:
+            - pkg: github.com/pkg/errors
+              desc: 'use the Eden errors model (github.com/gophersys/libs/go/errors), not pkg/errors.'
+        # Test code: the production boundary PLUS the ADR-0020 test-taxonomy tools, which are
+        # test-only by construction (they never enter a production import graph) and are pinned
+        # in each lib's go.mod test-require block. The set is closed and annotated — not a
+        # wholesale opening: only the eight-dimension mechanisms are listed.
+        test-taxonomy:
+          files:
+            - '$test'
+          list-mode: lax
+          allow:
+            - $gostd
+            - github.com/gophersys/libs/go
+            - go.uber.org/goleak          # (b) resource-leak detection (goleak.VerifyTestMain).
+            - pgregory.net/rapid          # (a) property-based testing (rapid suites).
+          deny:
+            - pkg: github.com/pkg/errors
+              desc: 'use the Eden errors model (github.com/gophersys/libs/go/errors), not pkg/errors.'
+
+    revive:
+      # Surface the doc-comment / naming / receiver rules 10 §9 calls out.
+      rules:
+        - name: exported            # every exported symbol carries a doc comment.
+        - name: package-comments    # every package has a package comment.
+        - name: receiver-naming     # one receiver name per type, used consistently.
+        - name: error-return        # error is the last return value.
+        - name: error-strings       # error strings are lowercase, no trailing punctuation.
+        - name: error-naming        # sentinel/type error naming (pairs with errname).
+        - name: var-naming          # MixedCaps, initialisms (ID/URL), no underscores.
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: indent-error-flow
+        - name: increment-decrement
+        - name: range
+        - name: superfluous-else
+        - name: unexported-return
+        - name: unreachable-code
+
+    staticcheck:
+      # Keep the full default check set (SA/ST/QF/S families). Listed explicitly
+      # so the gate is self-documenting and a future relaxation is a visible diff.
+      checks:
+        - all
+
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - performance
+        - style
+
+    cyclop:
+      max-complexity: 15    # per-function cyclomatic ceiling — reasonable, not lax.
+      package-average: 10.0 # package-wide average guard against death-by-a-thousand.
+
+    gocognit:
+      min-complexity: 20    # cognitive-complexity ceiling per function.
+
+    exhaustive:
+      # Every switch over an enum (e.g. errors.Kind) handles all cases or has a
+      # default. default-signifies-exhaustive keeps a deliberate `default:` legal.
+      default-signifies-exhaustive: true
+      check:
+        - switch
+
+    misspell:
+      locale: US
+
+    godot:
+      scope: toplevel       # require the trailing period on top-level doc comments.
+      capital: false
+
+  exclusions:
+    # Use only explicitly-justified exclusions — no `default` preset that would
+    # silently mute findings. generated:strict lets nothing through that is not
+    # genuinely machine-generated.
+    generated: strict
+    rules:
+      # Test files are held to the production bar (they are part of the contract
+      # proof, 08 §2), with two pragmatic carve-outs that are wrong-for-contract
+      # in *_test.go specifically:
+      - path: _test\.go
+        linters:
+          - err113      # tests legitimately mint ad-hoc errors as fixtures.
+          - wrapcheck   # test helpers surface raw errors for assertion.
+          - dupl
+      # The mandatory package comment belongs on ONE file per package; revive's
+      # package-comments otherwise flags every other file in a multi-file package.
+      - source: '^// Package '
+        linters:
+          - revive
+        text: 'package-comment'
+
+issues:
+  # Report every occurrence: a strict gate must not hide the 4th violation of a
+  # rule behind the first three. Zero new issues is the bar.
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+# v2 moves formatters out of `linters`. gofumpt is the canonical formatter
+# (ADR-0018: "gofumpt — stricter-than-gofmt formatting; zero tolerance"); goimports
+# enforces grouped, canonically-ordered imports.
+formatters:
+  enable:
+    - gofumpt           # stricter-than-gofmt; the ADR-0018 formatting floor.
+    - goimports         # canonical import grouping/ordering.
+  settings:
+    gofumpt:
+      extra-rules: true

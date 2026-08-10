@@ -13,9 +13,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/gophersys/eden/tools/cictl/internal/contract"
-	"github.com/gophersys/eden/tools/cictl/internal/failure"
-	"github.com/gophersys/eden/tools/cictl/internal/schema"
+	"github.com/gophersys/cictl/internal/contract"
+	"github.com/gophersys/cictl/internal/failure"
+	"github.com/gophersys/cictl/internal/schema"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
@@ -193,6 +193,29 @@ func instanceLocation(loc []string) string {
 // semantic enforces the cross-field rules a JSON Schema cannot express, plus a
 // defensive re-check of the closed-set memberships so a semantic-only caller is
 // complete.
+// runnerProblems checks the runner and the image it does or does not pair with.
+// It is its own function because the rule is self-contained and because folding
+// it into semantic() pushed that function past the complexity ceiling.
+//
+// A container job must name a known image. A self-hosted pool must not name one
+// at all: its runner image already carries the toolchain, so a second image would
+// be silently ignored — dead configuration that reads as intent.
+func runnerProblems(c *contract.Contract) []Problem {
+	var p []Problem
+	if c.Runner.RunsOn == "" {
+		p = append(p, Problem{Where: "/runner/runsOn", Message: "must be non-empty"})
+	}
+	switch {
+	case c.Runner.Container && c.Image == "":
+		p = append(p, Problem{Where: "/image", Message: "required when runner.container is true"})
+	case c.Runner.Container && !inSet(c.Image, contract.Images):
+		p = append(p, Problem{Where: "/image", Message: fmt.Sprintf("unknown image %q (want one of %s)", c.Image, joinImages(contract.Images))})
+	case !c.Runner.Container && c.Image != "":
+		p = append(p, Problem{Where: "/image", Message: "must be empty unless runner.container is true; a self-hosted pool's runner image already carries the toolchain"})
+	}
+	return p
+}
+
 func semantic(c *contract.Contract) []Problem {
 	var p []Problem
 
@@ -205,9 +228,7 @@ func semantic(c *contract.Contract) []Problem {
 	if !inSet(c.Kind, contract.Kinds) {
 		p = append(p, Problem{Where: "/kind", Message: fmt.Sprintf("unknown kind %q (want one of %s)", c.Kind, joinKinds(contract.Kinds))})
 	}
-	if !inSet(c.Image, contract.Images) {
-		p = append(p, Problem{Where: "/image", Message: fmt.Sprintf("unknown image %q (want one of %s)", c.Image, joinImages(contract.Images))})
-	}
+	p = append(p, runnerProblems(c)...)
 	if len(c.Languages) == 0 {
 		p = append(p, Problem{Where: "/languages", Message: "must list at least one language"})
 	}

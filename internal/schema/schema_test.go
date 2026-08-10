@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/gophersys/eden/tools/cictl/internal/schema"
+	"github.com/gophersys/cictl/internal/schema"
 )
 
 // TestEmit_IsValidJSON asserts the emitted schema parses as JSON and carries the
@@ -48,8 +48,12 @@ func TestEmit_RequiredTopLevel(t *testing.T) {
 	if err := json.Unmarshal(doc, &root); err != nil {
 		t.Fatalf("parse: %v", err)
 	}
+	// `image` is deliberately NOT here: it is required only when the runner asks
+	// for a container. A self-hosted pool's runner image already carries the
+	// toolchain, so there is nothing to put in one. The container/image pairing is
+	// enforced semantically instead — see TestValidate_RejectsMalformed.
 	want := map[string]bool{
-		"apiVersion": false, "repo": false, "kind": false, "image": false,
+		"apiVersion": false, "repo": false, "kind": false, "runner": false,
 		"languages": false, "tiers": false, "providers": false, "toolMatrix": false,
 	}
 	req, ok := root["required"].([]any)
@@ -64,6 +68,11 @@ func TestEmit_RequiredTopLevel(t *testing.T) {
 	for field, seen := range want {
 		if !seen {
 			t.Errorf("required field %q missing from schema's required list", field)
+		}
+	}
+	for _, r := range req {
+		if s, ok := r.(string); ok && s == "image" {
+			t.Error("`image` must not be globally required: a self-hosted pool has no container to put it in")
 		}
 	}
 }

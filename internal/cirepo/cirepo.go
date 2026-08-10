@@ -11,9 +11,9 @@ import (
 	"path/filepath"
 	"sort"
 
-	"github.com/gophersys/eden/tools/cictl/internal/contract"
-	"github.com/gophersys/eden/tools/cictl/internal/failure"
-	"github.com/gophersys/eden/tools/cictl/internal/workflow"
+	"github.com/gophersys/cictl/internal/contract"
+	"github.com/gophersys/cictl/internal/failure"
+	"github.com/gophersys/cictl/internal/workflow"
 )
 
 // Layout resolves the CI paths for a repo rooted at repoDir.
