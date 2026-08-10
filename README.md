@@ -1,36 +1,38 @@
 # cictl
 
-The CI contract tool for `gophersys`. One file per repo — `.ci/ci.contract.yaml` —
-describes what that repo's CI is; `cictl` generates the provider workflows from it
-and fails the build if anyone hand-edits the result.
+The CI contract tool for `gophersys`. `cictl` uses one contract file for each
+repository: `.ci/ci.contract.yaml`. The file describes the CI of that
+repository. `cictl` generates the provider workflows from the file. `cictl`
+fails the build if a person edits a generated workflow by hand.
 
 ## Why it exists
 
-CI logic had been living in YAML: 386 lines of inline shell across 22 workflow
-files, plus nine workflow files maintained as byte-identical hand-copied twins.
-Shell in YAML cannot be run locally, cannot be shellchecked, and cannot be tested.
+The CI logic was in YAML. There were 386 lines of inline shell in 22 workflow
+files. There were also 9 workflow files that were hand-made copies, identical
+byte for byte. You cannot run shell that is in YAML on your machine. You cannot
+check it with shellcheck. You cannot test it.
 
-The contract inverts that. The repo declares *what* it wants; the generator owns
-*how* it is expressed for a provider; and the verbs themselves live in
-`.ci/ctl.sh`, where they are ordinary shell that a human can run.
+The contract changes this. The repository declares *what* it wants. The
+generator controls *how* a provider expresses it. The verbs are in
+`.ci/ctl.sh`, where they are usual shell commands that a person can run.
 
 ## History
 
-This tool lived at `eden/tools/cictl` and was adopted by exactly one repo, which
-then failed **100 consecutive CI runs** — every run since adoption. Three causes,
-all now fixed or recorded:
+This tool was at `eden/tools/cictl`. Only 1 repository adopted it. That
+repository then failed **100 CI runs in sequence**, which was every run after
+the adoption. There were 3 causes. All 3 causes are now corrected or recorded.
 
-1. The renderer hardcoded `runs-on: ubuntu-latest`, so jobs never reached the
-   self-hosted fleet. The contract now carries a `runner`.
-2. It emitted a `container:` block authenticated with `${{ secrets.GITHUB_TOKEN }}`
-   against a **private** package, which returns 403. A self-hosted pool now emits
-   no container block at all.
-3. The `cictl` binary the generated workflows invoke was installed in no image and
-   no PATH. It is now installed into `ghcr.io/gophersys/base`.
+1. The renderer wrote `runs-on: ubuntu-latest` as a fixed value. Thus the jobs
+   never went to the self-hosted pool. The contract now has a `runner` field.
+2. The renderer wrote a `container:` block that used `${{ secrets.GITHUB_TOKEN }}`
+   to authenticate against a **private** package. This returns 403. For a
+   self-hosted pool, `cictl` now writes no container block at all.
+3. The generated workflows call the `cictl` binary. That binary was in no image
+   and in no PATH. The binary is now installed into `ghcr.io/gophersys/base`.
 
-Extracted here with `git subtree split`, so the original authorship and dates
-survive. The module has no dependency on the monorepo it came from — verified by
-the fact that the only rename needed was the module path.
+`git subtree split` extracted this repository, thus the original authorship and
+the original dates stay correct. The module does not depend on the monorepo that
+contained it. The proof is that the module path was the only necessary rename.
 
 ## The contract
 
@@ -51,45 +53,46 @@ toolMatrix:
   sources: ["**/go.mod"]
 ```
 
-### `runner` is the load-bearing field
+### The `runner` field is the critical field
 
-`runsOn` is a free string, deliberately **not** an enum. Pools are added for
-physical capability — an architecture, a USB-attached board, a different kernel —
-and adding one must never require changing this code.
+`runsOn` is a free string. It is deliberately **not** an enum. You add a pool
+for a physical capability: an architecture, a USB-attached board or a different
+kernel. When you add a pool, you must never have to change this code.
 
-`container` decides whether jobs run inside `image`:
+`container` selects if the jobs run in `image`:
 
 | `container` | What is emitted | When to use it |
 | --- | --- | --- |
 | `false` | no container block | a self-hosted pool whose runner image **is** the toolchain |
-| `true` | `container:` + registry credentials | a GitHub-hosted runner that needs an image |
+| `true` | `container:` and the registry credentials | a GitHub-hosted runner that needs an image |
 
-`image` is required when `container` is true and **must be absent** when it is
-false. A self-hosted pool that also names an image is dead configuration that
-reads as intent, so validation rejects it.
+`image` is required when `container` is `true`. `image` **must be absent** when
+`container` is `false`. If a self-hosted pool also gives an image, that image
+has no effect, but a reader can think that it has an effect. Thus the validation
+rejects it.
 
-The reason the false case matters: a `container:` image is pulled **inside the
-runner pod**, and the pod is ephemeral, so nothing caches. Measured at over five
-minutes per job for these images. As the pod's own image, the kubelet pulls it
-once per node.
+The `false` case is important for this reason. The runner pod pulls a
+`container:` image **inside the pod**. The pod is ephemeral, thus no cache keeps
+the image. The measured time is more than 5 minutes per job for these images. If
+the image is the image of the pod, the kubelet pulls it one time per node.
 
 ## Commands
 
-| Command | Does |
+| Command | Function |
 | --- | --- |
-| `schema` | emit the JSON Schema for the contract |
-| `validate` | structural + semantic check of `.ci/ci.contract.yaml` |
-| `conformance` | assert `.ci/ctl.sh` actually implements every verb the contract names |
-| `generate` | write the provider workflows |
-| `drift` | re-render in memory and fail on any hand-edit — **this is the gate** |
-| `affected` | project roots changed since a base ref |
-| `updatability` | aligned table of pinned tool versions, optionally probed upstream |
+| `schema` | Emits the JSON Schema of the contract. |
+| `validate` | Does a structural check and a semantic check of `.ci/ci.contract.yaml`. |
+| `conformance` | Asserts that `.ci/ctl.sh` really implements every verb that the contract names. |
+| `generate` | Writes the provider workflows. |
+| `drift` | Renders the workflows again in memory and fails on any hand edit. **This command is the gate.** |
+| `affected` | Lists the project roots that changed after a base ref. |
+| `updatability` | Shows an aligned table of the pinned tool versions. It can also probe upstream. |
 
-## This repo's own CI is hand-written, on purpose
+## The CI of this repository is hand-written, on purpose
 
-`cictl` does not generate its own workflow. Doing so would make the tool that
-gates the build a product of the build it gates. The exception is deliberate and
-it is the only one.
+`cictl` does not generate its own workflow. If it did, the tool that gates the
+build would be a product of the build that it gates. This exception is
+deliberate and it is the only exception.
 
 ## Development
 
@@ -98,5 +101,5 @@ bash ./ctl.sh test      # go test ./...
 bash ./ctl.sh gate      # fmt + vet + lint + test
 ```
 
-Every verb runs with `GOWORK=off`: the module must build standalone, because that
-is how CI consumes it.
+Each verb runs with `GOWORK=off`. The module must build on its own, because CI
+uses the module in that way.
