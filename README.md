@@ -1,9 +1,9 @@
 # cictl
 
-The CI contract tool for `gophersys`. Each repository has one contract file:
-`.ci/ci.contract.yaml`. The file describes the CI of that repository. `cictl`
-generates the provider workflows from the file. `cictl` fails the build if a
-person edits a generated workflow by hand.
+The CI contract tool for `gophersys`. `cictl` uses one contract file for each
+repository: `.ci/ci.contract.yaml`. The file describes the CI of that
+repository. `cictl` generates the provider workflows from the file. `cictl`
+fails the build if a person edits a generated workflow by hand.
 
 ## Why it exists
 
@@ -12,26 +12,26 @@ files. There were also 9 workflow files that were hand-made copies, identical
 byte for byte. You cannot run shell that is in YAML on your machine. You cannot
 check it with shellcheck. You cannot test it.
 
-The contract changes this. The repository declares what it wants. The generator
-controls how a provider expresses it. The verbs are in `.ci/ctl.sh`, where they
-are usual shell commands that a person can run.
+The contract changes this. The repository declares *what* it wants. The
+generator controls *how* a provider expresses it. The verbs are in
+`.ci/ctl.sh`, where they are usual shell commands that a person can run.
 
 ## History
 
 This tool was at `eden/tools/cictl`. Only 1 repository adopted it. That
-repository then failed 100 CI runs in sequence, which was every run after the
-adoption. There were 3 causes. All 3 causes are now corrected or recorded.
+repository then failed **100 CI runs in sequence**, which was every run after
+the adoption. There were 3 causes. All 3 causes are now corrected or recorded.
 
 1. The renderer wrote `runs-on: ubuntu-latest` as a fixed value. Thus the jobs
    never went to the self-hosted pool. The contract now has a `runner` field.
 2. The renderer wrote a `container:` block that used `${{ secrets.GITHUB_TOKEN }}`
    to authenticate against a **private** package. This returns 403. For a
-   self-hosted pool, `cictl` now writes no container block.
+   self-hosted pool, `cictl` now writes no container block at all.
 3. The generated workflows call the `cictl` binary. That binary was in no image
    and in no PATH. The binary is now installed into `ghcr.io/gophersys/base`.
 
-`git subtree split` extracted this repository, thus the initial authorship and
-the initial dates stay correct. The module does not depend on the monorepo that
+`git subtree split` extracted this repository, thus the original authorship and
+the original dates stay correct. The module does not depend on the monorepo that
 contained it. The proof is that the module path was the only necessary rename.
 
 ## The contract
@@ -57,7 +57,7 @@ toolMatrix:
 
 `runsOn` is a free string. It is deliberately **not** an enum. You add a pool
 for a physical capability: an architecture, a USB-attached board or a different
-kernel. The addition of a pool must never make a change to this code necessary.
+kernel. When you add a pool, you must never have to change this code.
 
 `container` selects if the jobs run in `image`:
 
@@ -66,7 +66,7 @@ kernel. The addition of a pool must never make a change to this code necessary.
 | `false` | no container block | a self-hosted pool whose runner image **is** the toolchain |
 | `true` | `container:` and the registry credentials | a GitHub-hosted runner that needs an image |
 
-`image` is necessary when `container` is `true`. `image` **must be absent** when
+`image` is required when `container` is `true`. `image` **must be absent** when
 `container` is `false`. If a self-hosted pool also gives an image, that image
 has no effect, but a reader can think that it has an effect. Thus the validation
 rejects it.
@@ -82,9 +82,9 @@ the image is the image of the pod, the kubelet pulls it one time per node.
 | --- | --- |
 | `schema` | Emits the JSON Schema of the contract. |
 | `validate` | Does a structural check and a semantic check of `.ci/ci.contract.yaml`. |
-| `conformance` | Makes sure that `.ci/ctl.sh` implements each verb that the contract names. |
+| `conformance` | Asserts that `.ci/ctl.sh` really implements every verb that the contract names. |
 | `generate` | Writes the provider workflows. |
-| `drift` | Renders the workflows again in memory and fails on each hand edit. **This command is the gate.** |
+| `drift` | Renders the workflows again in memory and fails on any hand edit. **This command is the gate.** |
 | `affected` | Lists the project roots that changed after a base ref. |
 | `updatability` | Shows an aligned table of the pinned tool versions. It can also probe upstream. |
 
@@ -101,5 +101,5 @@ bash ./ctl.sh test      # go test ./...
 bash ./ctl.sh gate      # fmt + vet + lint + test
 ```
 
-Each verb runs with `GOWORK=off`. The module must build alone, because CI uses
-the module in that way.
+Each verb runs with `GOWORK=off`. The module must build on its own, because CI
+uses the module in that way.
