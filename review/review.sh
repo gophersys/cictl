@@ -92,11 +92,25 @@ log "reviewer exited ${rc}, $(wc -c < "$out_file") bytes"
 
 # The verdict decides how the review is posted. An unparseable verdict is a
 # failure: a review with no verdict cannot end the loop.
-if grep -qE '^REQUEST_CHANGES[[:space:]]*$' "$out_file"; then
-  event=REQUEST_CHANGES
-elif grep -qE '^APPROVE[[:space:]]*$' "$out_file"; then
-  event=APPROVE
+# Match the verdict on its own line, tolerating markdown. The first version
+# required a bare line and rejected a real 3281-byte review because the model
+# wrote the verdict with emphasis. The token must still stand alone on the line:
+# that is what stops a verdict being matched from inside a sentence such as
+# "I would APPROVE this if ...".
+# shellcheck disable=SC2016  # a regex, not a string to expand
+verdict_re='^[[:space:]]*[*_`#> ]*(APPROVE|REQUEST_CHANGES)[*_`.: ]*[[:space:]]*$'
+if grep -qE "$verdict_re" "$out_file"; then
+  if grep -qE "^[[:space:]]*[*_\`#> ]*REQUEST_CHANGES" "$out_file"; then
+    event=REQUEST_CHANGES
+  else
+    event=APPROVE
+  fi
 else
+  # Print the tail before failing. The first version discarded the output, so a
+  # rejected review could only be diagnosed by paying for another one.
+  echo "--- last 20 lines of the reviewer output ---" >&2
+  tail -20 "$out_file" >&2
+  echo "--- end ---" >&2
   die "the reviewer returned no verdict line (APPROVE or REQUEST_CHANGES). Not posting."
 fi
 log "verdict: ${event}"
