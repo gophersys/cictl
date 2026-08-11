@@ -94,11 +94,34 @@ the image is the image of the pod, the kubelet pulls it one time per node.
 build would be a product of the build that it gates. This exception is
 deliberate and it is the only exception.
 
+## The review agent
+
+`review/review.sh` runs the pull request review agent. It starts a paid agent
+and it writes to a pull request. Its value is in what it refuses to do.
+
+`review/review_test.sh` proves the refusals. The suite runs in 2 phases.
+
+1. **Behaviour.** Each test runs against the real `review.sh`. All must pass.
+2. **Mutation.** For each test, the suite deletes the 1 line that holds the guard
+   which that test covers. The same test must then fail. A test that still
+   passes proves nothing, thus the suite exits non-zero.
+
+Each guard in `review.sh` is 1 line and ends with a `# guard:<name>` marker.
+Keep each guard on 1 line, because the mutation phase removes the whole line. If
+you delete a marker, the mutation phase stops with an error. It does not skip.
+
+The suite makes no network call and it spends no money. It replaces `PATH` with
+a sandbox directory. The sandbox holds a stub `claude`, a stub `gh` and the
+small set of coreutils that `review.sh` needs. The real `claude` and the real
+`gh` are unreachable. The runs also use `env -i`, thus a real token or a real API
+key on the machine cannot rescue a test and cannot break one.
+
 ## Development
 
 ```sh
-bash ./ctl.sh test      # go test ./...
-bash ./ctl.sh gate      # fmt + vet + lint + test
+bash ./ctl.sh test         # go test -race ./... and the review guard suite
+bash ./ctl.sh test-review  # only the review guard suite
+bash ./ctl.sh gate         # build + lint + test
 ```
 
 Each verb runs with `GOWORK=off`. The module must build on its own, because CI
