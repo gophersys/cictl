@@ -194,15 +194,30 @@ log "review: $(wc -c < "$out_file") bytes"
 RE_REQUEST_CHANGES='^[[:space:]]*[*_`#> ]*REQUEST_CHANGES[*_`]*([[:space:]]*[—:.-].*)?[[:space:]]*$' # verdict:request-changes
 # shellcheck disable=SC2016  # a regex, not a string to expand
 RE_APPROVE='^[[:space:]]*[*_`#> ]*APPROVE[*_`]*([[:space:]]*[—:.-].*)?[[:space:]]*$' # verdict:approve
+#
+# THE REVIEW IS THE PRODUCT. THE VERDICT IS METADATA.
+#
+# 2 real reviews were thrown away because their verdict line did not match: 1
+# carried markdown emphasis, 1 carried a trailing reason. Each time a paid run
+# was discarded, the pull request got nothing, and a human had to notice.
+#
+# That trade is always wrong. A review that names a real defect is worth having
+# even when its last line is punctuated oddly. So an unparseable verdict NEVER
+# discards the review now: the body is posted, the job records that the verdict
+# could not be read, and it FAILS on that. The work is kept and the defect is
+# still loud.
+verdict_parsed=yes
 if grep -qE "$RE_REQUEST_CHANGES" "$out_file"; then
   event=REQUEST_CHANGES
 elif grep -qE "$RE_APPROVE" "$out_file"; then
   event=APPROVE
 else
-  # Print the tail before failing. The first version discarded the output, so a
-  # rejected review could only be diagnosed by paying for another one.
-  echo "--- last 20 lines of the reviewer output ---" >&2; tail -20 "$out_file" >&2; echo "--- end ---" >&2
-  die "the reviewer returned no verdict line (APPROVE or REQUEST_CHANGES). Not posting." # guard:verdict
+  verdict_parsed=no # guard:verdict
+  # REQUEST_CHANGES is the safe reading of an unreadable verdict: it asks a human
+  # to look, where APPROVE would wave the change through on a guess.
+  event=REQUEST_CHANGES
+  log "the verdict line could not be read, so this review is posted as ${event} and the job will fail"
+  printf '\n\n---\n\n> The verdict line of this review could not be read automatically, so it\n> was recorded as REQUEST_CHANGES. The findings above are unchanged. The\n> reviewer should end with a line that OPENS with APPROVE or REQUEST_CHANGES.\n' >> "$out_file"
 fi
 log "verdict: ${event}"
 
@@ -215,6 +230,10 @@ gh pr comment "$PR" --body-file "$out_file" || die "could not post the review co
 log "posted round ${round} of ${MAX_ROUNDS} review on #${PR}"
 log "full event stream: ${STREAM_FILE}"
 [ "$event" = "APPROVE" ] || log "changes requested — fix the findings and push again"
+
+# The review is posted by now, so failing here loses nothing. It stays loud
+# because a verdict nobody can read means the loop cannot end on its own.
+[ "$verdict_parsed" = "yes" ] || die "the review was posted, but its verdict line could not be read. Fix the reviewer instructions or the matcher." # guard:verdict-unparsed
 
 # Not every denial is a defect, and the first version of this got it wrong.
 #

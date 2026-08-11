@@ -296,6 +296,21 @@ t_empty_reviewer_output_is_not_posted() {
   assert_no_comment
 }
 
+# An unreadable verdict must NEVER discard the review. The body is posted, it is
+# recorded as REQUEST_CHANGES because that asks a human to look, and the job still
+# fails so the problem stays loud.
+t_an_unreadable_verdict_is_posted_and_then_fails() {
+  local sb; sb="$(new_sandbox)"
+  printf 'Where: x.go:1\nWhat: a real defect worth keeping.\n\nI think you should probably change this.\n' > "$sb/fx/out"
+  run_review "$sb" ${CREDS[@]+"${CREDS[@]}"} -- 1
+  assert_comment_posted
+  assert_rc_nonzero
+  assert_stderr_has "verdict line could not be read"
+  grep -qF -- 'a real defect worth keeping' "$SB/posted_body" \
+    || fail "the paid review was discarded instead of posted"
+  assert_stdout_has "verdict: REQUEST_CHANGES"
+}
+
 t_output_without_a_verdict_is_not_posted() {
   local sb; sb="$(new_sandbox)"
   printf 'I read the diff. It looks good to me.\nAPPROVED maybe.\n' > "$sb/fx/out"
@@ -359,9 +374,13 @@ t_a_verdict_inside_a_sentence_is_not_a_verdict() {
   local sb; sb="$(new_sandbox)"
   printf 'I would APPROVE this if you fixed the test.\nThis does not REQUEST_CHANGES anything.\n' > "$sb/fx/out"
   run_review "$sb" ${CREDS[@]+"${CREDS[@]}"} -- 1
+  # The property under test is that a verdict word inside a sentence is NOT read
+  # as a verdict. It must never come out as APPROVE, which would wave a change
+  # through on a guess. The review is still posted, because the review is the
+  # product, and the job still fails because the verdict was unreadable.
   assert_rc_nonzero
-  assert_stderr_has "no verdict line"
-  assert_no_comment
+  assert_stdout_has "verdict: REQUEST_CHANGES"
+  assert_stderr_has "verdict line could not be read"
 }
 
 # ---- the event stream: capture, and the failures it makes visible ----
@@ -529,7 +548,7 @@ TESTS=(
   t_empty_diff_is_refused
   t_temp_files_are_removed_when_the_run_fails
   t_empty_reviewer_output_is_not_posted
-  t_output_without_a_verdict_is_not_posted
+  t_an_unreadable_verdict_is_posted_and_then_fails
   t_request_changes_is_reported_as_request_changes
   t_approve_is_posted_with_the_guarded_flag_set
   t_a_markdown_verdict_is_understood
@@ -568,7 +587,8 @@ guard:empty-stream          t_an_empty_stream_is_refused
 guard:no-result-event       t_a_stream_with_no_result_event_is_refused
 guard:agent-error           t_an_agent_error_is_not_posted
 guard:empty-output          t_empty_reviewer_output_is_not_posted
-guard:verdict               t_output_without_a_verdict_is_not_posted
+guard:verdict               t_an_unreadable_verdict_is_posted_and_then_fails
+guard:verdict-unparsed      t_an_unreadable_verdict_is_posted_and_then_fails
 guard:denials               t_a_denied_read_is_posted_and_then_fails_the_job
 guard:round-limit           t_a_third_run_refuses_before_it_costs_anything
 verdict:request-changes     t_a_verdict_may_carry_its_reason
@@ -642,7 +662,8 @@ mutation_for() {
     # Deleting a line inside an if/else would be a syntax error, so these 3
     # replace the line instead.
     t_temp_files_are_removed_when_the_run_fails) printf 's|^.*# guard:temp-lifetime$|diff_file="$(mktemp)"|' ;;
-    t_output_without_a_verdict_is_not_posted)    printf 's|^.*# guard:verdict$|  event=APPROVE|' ;;
+    # Remove the line that FAILS the job, so an unreadable verdict passes silently.
+    t_an_unreadable_verdict_is_posted_and_then_fails) printf '/# guard:verdict-unparsed$/d' ;;
     t_request_changes_is_reported_as_request_changes) printf 's|^.*# verdict:request-changes$|  event=APPROVE|' ;;
     t_approve_is_posted_with_the_guarded_flag_set)    printf 's|^.*# post:comment$|:|' ;;
     *) die "no mutation is declared for $1; every test must name the guard that it proves" ;;
