@@ -202,10 +202,19 @@ log "posted round ${round} of ${MAX_ROUNDS} review on #${PR}"
 log "full event stream: ${STREAM_FILE}"
 [ "$event" = "APPROVE" ] || log "changes requested — fix the findings and push again"
 
-# A denied tool call means the agent was blocked from reading something, so the
-# review is shallower than it looks. The comment is posted FIRST — a paid review
-# is not thrown away — and then the job fails, because a review that silently saw
-# less than it asked for is exactly the kind of quiet weakening we refuse.
-denials="$(jq -r '(.permission_denials // []) | length' <<< "$result")"
-[ "${denials:-0}" -eq 0 ] || die "${denials} tool call(s) were denied, so the review saw less than it asked for: $(jq -r '[(.permission_denials // [])[] | .tool_name // "?"] | join(", ")' <<< "$result")" # guard:denials
+# Not every denial is a defect, and the first version of this got it wrong.
+#
+# The reviewer runs under an explicit read-only allowlist. A denied Bash call is
+# that policy WORKING: a piped or compound command can never match a prefix rule,
+# so the agent reaching for `grep x f | head` is refused by design. Failing the
+# job for that punishes the policy for being enforced.
+#
+# What must never pass quietly is a denial of Read, Grep or Glob. Those are the
+# tools the reviewer needs in order to see the code at all, the allowlist grants
+# all 3, and a denial of one means the policy is not being applied as written —
+# so the review is genuinely shallower than it looks.
+denied_reads="$(jq -r '[(.permission_denials // [])[] | select(.tool_name == "Read" or .tool_name == "Grep" or .tool_name == "Glob")] | length' <<< "$result")"
+denied_other="$(jq -r '[(.permission_denials // [])[] | select(.tool_name != "Read" and .tool_name != "Grep" and .tool_name != "Glob") | .tool_name] | unique | join(", ")' <<< "$result")"
+[ -z "$denied_other" ] || log "  denied    ${denied_other} — outside the read-only allowlist, which is the policy working"
+[ "${denied_reads:-0}" -eq 0 ] || die "${denied_reads} read tool call(s) were denied, so the reviewer could not see the code: the allowlist grants Read, Grep and Glob and is not being applied" # guard:denials
 exit 0

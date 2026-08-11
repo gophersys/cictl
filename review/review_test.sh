@@ -400,9 +400,9 @@ APPROVE' true '[]' > "$sb/fx/stream"
   assert_no_comment
 }
 
-# A denial means the agent could not read something it asked for. The review is
-# posted anyway — it is paid for — and then the job fails, loudly.
-t_a_denied_tool_call_is_posted_and_then_fails_the_job() {
+# A denied READ means the reviewer could not see the code. The review is posted
+# anyway — it is paid for — and then the job fails, loudly.
+t_a_denied_read_is_posted_and_then_fails_the_job() {
   local sb; sb="$(new_sandbox)"
   stream_result 'Where: x.go:1
 What: a defect.
@@ -411,7 +411,21 @@ REQUEST_CHANGES' false '[{"tool_name":"Read"}]' > "$sb/fx/stream"
   run_review "$sb" ${CREDS[@]+"${CREDS[@]}"} -- 1
   assert_comment_posted
   assert_rc_nonzero
-  assert_stderr_has "were denied"
+  assert_stderr_has "could not see the code"
+}
+
+# A denied Bash is the read-only allowlist doing its job: a piped or compound
+# command cannot match a prefix rule. It must be reported and must NOT fail.
+t_a_denied_bash_is_reported_but_does_not_fail_the_job() {
+  local sb; sb="$(new_sandbox)"
+  stream_result 'Where: x.go:1
+What: a defect.
+
+REQUEST_CHANGES' false '[{"tool_name":"Bash"},{"tool_name":"Bash"}]' > "$sb/fx/stream"
+  run_review "$sb" ${CREDS[@]+"${CREDS[@]}"} -- 1
+  assert_comment_posted
+  assert_rc_zero
+  assert_stdout_has "which is the policy working"
 }
 
 # The reviewer's tool set is an allowlist, and it must stay read-only. A write
@@ -509,7 +523,8 @@ TESTS=(
   t_the_run_summary_and_the_stream_are_kept
   t_a_stream_with_no_result_event_is_refused
   t_an_agent_error_is_not_posted
-  t_a_denied_tool_call_is_posted_and_then_fails_the_job
+  t_a_denied_read_is_posted_and_then_fails_the_job
+  t_a_denied_bash_is_reported_but_does_not_fail_the_job
   t_the_agent_is_given_a_read_only_tool_set
   t_an_empty_stream_is_refused
   t_the_first_run_is_round_1
@@ -550,7 +565,9 @@ mutation_for() {
     t_the_run_summary_and_the_stream_are_kept)   printf '/# capture:summary$/d' ;;
     t_a_stream_with_no_result_event_is_refused)  printf '/# guard:no-result-event$/d' ;;
     t_an_agent_error_is_not_posted)              printf '/# guard:agent-error$/d' ;;
-    t_a_denied_tool_call_is_posted_and_then_fails_the_job) printf '/# guard:denials$/d' ;;
+    t_a_denied_read_is_posted_and_then_fails_the_job) printf '/# guard:denials$/d' ;;
+    # Widen the read set to everything, so a denied Bash also fails the job.
+    t_a_denied_bash_is_reported_but_does_not_fail_the_job) printf 's|select(.tool_name == \"Read\" or .tool_name == \"Grep\" or .tool_name == \"Glob\")|select(true)|' ;;
     t_the_agent_is_given_a_read_only_tool_set)   printf '/# capture:allowed-tools$/d' ;;
     t_an_empty_stream_is_refused)                printf '/# guard:empty-stream$/d' ;;
     t_the_first_run_is_round_1)                  printf 's|^round=.*|round=99|' ;;
