@@ -178,15 +178,22 @@ log "review: $(wc -c < "$out_file") bytes"
 # wrote the verdict with emphasis: a heading marker, a blockquote marker, a code
 # span and trailing punctuation all appear in practice.
 #
-# The anchors are the load-bearing part. The token must stand ALONE on its line,
-# and that is what stops a verdict being read out of a sentence such as "I would
-# APPROVE this if you fixed the test". Both properties have their own test, and
-# each test's mutation narrows or widens the pattern below rather than deleting
-# it, because a deleted pattern proves only that the branch exists.
+# The START anchor is the load-bearing part. The token must OPEN its line, which
+# is what stops a verdict being read out of a sentence such as "I would APPROVE
+# this if you fixed the test".
+#
+# It may carry its reason after a dash or a colon. Requiring the token to stand
+# entirely alone refused 2 real reviews: 1 written with markdown emphasis, and 1
+# written as "**REQUEST_CHANGES** — D44 should be marked resolved before this
+# merges". Each refusal threw away a paid review over punctuation.
+#
+# Both properties have their own test, and each test's mutation narrows or widens
+# the pattern below rather than deleting it, because a deleted pattern proves only
+# that the branch exists.
 # shellcheck disable=SC2016  # a regex, not a string to expand
-RE_REQUEST_CHANGES='^[[:space:]]*[*_`#> ]*REQUEST_CHANGES[*_`.: ]*[[:space:]]*$' # verdict:request-changes
+RE_REQUEST_CHANGES='^[[:space:]]*[*_`#> ]*REQUEST_CHANGES[*_`]*([[:space:]]*[—:.-].*)?[[:space:]]*$' # verdict:request-changes
 # shellcheck disable=SC2016  # a regex, not a string to expand
-RE_APPROVE='^[[:space:]]*[*_`#> ]*APPROVE[*_`.: ]*[[:space:]]*$' # verdict:approve
+RE_APPROVE='^[[:space:]]*[*_`#> ]*APPROVE[*_`]*([[:space:]]*[—:.-].*)?[[:space:]]*$' # verdict:approve
 if grep -qE "$RE_REQUEST_CHANGES" "$out_file"; then
   event=REQUEST_CHANGES
 elif grep -qE "$RE_APPROVE" "$out_file"; then

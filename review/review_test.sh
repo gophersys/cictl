@@ -344,6 +344,17 @@ t_a_markdown_verdict_is_understood() {
   assert_comment_posted
 }
 
+# A verdict may carry its reason. Requiring the token to stand entirely alone
+# refused 2 real reviews over punctuation, each one a paid run thrown away.
+t_a_verdict_may_carry_its_reason() {
+  local sb; sb="$(new_sandbox)"
+  printf 'Where: x.go:1\nWhat: a defect.\n\n**REQUEST_CHANGES** — D44 should be marked resolved before this merges.\n' > "$sb/fx/out"
+  run_review "$sb" ${CREDS[@]+"${CREDS[@]}"} -- 1
+  assert_rc_zero
+  assert_stdout_has "verdict: REQUEST_CHANGES"
+  assert_comment_posted
+}
+
 t_a_verdict_inside_a_sentence_is_not_a_verdict() {
   local sb; sb="$(new_sandbox)"
   printf 'I would APPROVE this if you fixed the test.\nThis does not REQUEST_CHANGES anything.\n' > "$sb/fx/out"
@@ -523,6 +534,7 @@ TESTS=(
   t_approve_is_posted_with_the_guarded_flag_set
   t_a_markdown_verdict_is_understood
   t_a_verdict_inside_a_sentence_is_not_a_verdict
+  t_a_verdict_may_carry_its_reason
   t_the_run_summary_and_the_stream_are_kept
   t_a_stream_with_no_result_event_is_refused
   t_an_agent_error_is_not_posted
@@ -559,10 +571,11 @@ guard:empty-output          t_empty_reviewer_output_is_not_posted
 guard:verdict               t_output_without_a_verdict_is_not_posted
 guard:denials               t_a_denied_read_is_posted_and_then_fails_the_job
 guard:round-limit           t_a_third_run_refuses_before_it_costs_anything
+verdict:request-changes     t_a_verdict_may_carry_its_reason
 capture:summary             t_the_run_summary_and_the_stream_are_kept
 capture:allowed-tools       t_the_agent_is_given_a_read_only_tool_set
-verdict:request-changes     t_request_changes_is_reported_as_request_changes
 verdict:approve             t_a_verdict_inside_a_sentence_is_not_a_verdict
+  t_a_verdict_may_carry_its_reason
 post:marker                 t_the_posted_review_carries_the_marker
 post:comment                t_approve_is_posted_with_the_guarded_flag_set
 "
@@ -609,6 +622,8 @@ mutation_for() {
     t_a_denied_bash_is_reported_but_does_not_fail_the_job) printf 's|select(.tool_name == \"Read\" or .tool_name == \"Grep\" or .tool_name == \"Glob\")|select(true)|' ;;
     t_the_agent_is_given_a_read_only_tool_set)   printf '/# capture:allowed-tools$/d' ;;
     t_an_empty_stream_is_refused)                printf '/# guard:empty-stream$/d' ;;
+    # Narrow the pattern back to a token that must stand entirely alone.
+    t_a_verdict_may_carry_its_reason)            printf 's|^RE_REQUEST_CHANGES=.*|RE_REQUEST_CHANGES="^REQUEST_CHANGES[[:space:]]*$"|' ;;
     t_the_first_run_is_round_1)                  printf 's|^round=.*|round=99|' ;;
     t_a_second_run_is_round_2_and_sees_the_first) printf 's|^round=.*|round=1|' ;;
     # Raise the ceiling out of the way, so a third round proceeds and spends.
