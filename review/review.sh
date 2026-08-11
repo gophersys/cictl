@@ -30,6 +30,9 @@ MAX_TURNS="${REVIEW_MAX_TURNS:-40}"
 # The full event stream. The workflow keeps it as an artifact, so it must outlive
 # the run and therefore is NOT a temp file.
 STREAM_FILE="${REVIEW_STREAM_FILE:-review-stream.jsonl}"
+# Every tool the reviewer may use. Read-only by construction: nothing here can
+# write to the tree, post a comment or merge anything.
+READ_ONLY_TOOLS="${REVIEW_ALLOWED_TOOLS:-Read,Grep,Glob,Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh api:*),Bash(git log:*),Bash(git show:*),Bash(git diff:*),Bash(ls:*),Bash(cat:*),Bash(rg:*),Bash(find:*)}" # capture:allowed-tools
 
 log() { printf '\033[0;36m[review]\033[0m %s\n' "$*"; }
 die() { printf '\033[0;31m[review]\033[0m %s\n' "$*" >&2; exit 1; }
@@ -96,6 +99,13 @@ round=1
 # --max-budget-usd is the real ceiling, not a proxy. --permission-mode default
 # keeps the agent from editing anything: it reads and reports.
 #
+# READ_ONLY_TOOLS states what the reviewer may do, rather than leaving it to the
+# default to deny whatever it happens to deny. On the first run under the new
+# capture, 4 Bash calls were denied and every one of them was the agent trying to
+# read the cross-repository pull request that the description referenced. It was
+# doing exactly the right thing and could not. Each entry is read-only: `gh pr
+# view` cannot comment and cannot merge, and no entry can write to the tree.
+#
 # The whole event stream is kept, not only the final text. When a review came
 # back wrong there was no record of which files the agent read, how many turns it
 # took or what it cost against the ceiling, so the only way to learn anything was
@@ -108,6 +118,7 @@ claude -p \
   --max-budget-usd "$BUDGET_USD" \
   --max-turns "$MAX_TURNS" \
   --permission-mode default \
+  --allowedTools "$READ_ONLY_TOOLS" \
   --output-format stream-json --verbose \
   --append-system-prompt "$(cat "$HERE/CLAUDE.md")" \
   < "$prompt_file" > "$STREAM_FILE" 2> "$err_file"
