@@ -110,12 +110,21 @@ log "reviewer exited ${rc}, $(wc -c < "$out_file") bytes"
 # failure: a review with no verdict cannot end the loop.
 # Match the verdict on its own line, tolerating markdown. The first version
 # required a bare line and rejected a real 3281-byte review because the model
-# wrote the verdict with emphasis. The token must still stand alone on the line:
-# that is what stops a verdict being matched from inside a sentence such as
-# "I would APPROVE this if ...".
-if grep -qE '^[[:space:]]*[*_`#> ]*REQUEST_CHANGES[*_`.: ]*[[:space:]]*$' "$out_file"; then
-  event=REQUEST_CHANGES # verdict:request-changes
-elif grep -qE '^[[:space:]]*[*_`#> ]*APPROVE[*_`.: ]*[[:space:]]*$' "$out_file"; then
+# wrote the verdict with emphasis: a heading marker, a blockquote marker, a code
+# span and trailing punctuation all appear in practice.
+#
+# The anchors are the load-bearing part. The token must stand ALONE on its line,
+# and that is what stops a verdict being read out of a sentence such as "I would
+# APPROVE this if you fixed the test". Both properties have their own test, and
+# each test's mutation narrows or widens the pattern below rather than deleting
+# it, because a deleted pattern proves only that the branch exists.
+# shellcheck disable=SC2016  # a regex, not a string to expand
+RE_REQUEST_CHANGES='^[[:space:]]*[*_`#> ]*REQUEST_CHANGES[*_`.: ]*[[:space:]]*$' # verdict:request-changes
+# shellcheck disable=SC2016  # a regex, not a string to expand
+RE_APPROVE='^[[:space:]]*[*_`#> ]*APPROVE[*_`.: ]*[[:space:]]*$' # verdict:approve
+if grep -qE "$RE_REQUEST_CHANGES" "$out_file"; then
+  event=REQUEST_CHANGES
+elif grep -qE "$RE_APPROVE" "$out_file"; then
   event=APPROVE
 else
   # Print the tail before failing. The first version discarded the output, so a

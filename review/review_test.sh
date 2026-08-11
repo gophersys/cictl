@@ -45,7 +45,10 @@ fail() { printf '       %s\n' "$*" >&2; exit 1; }
 
 # Every external command that review.sh can run, apart from the 4 tools that it
 # gates on. The sandbox PATH holds these and nothing else.
-COREUTILS=(bash dirname rm wc cat grep)
+# The sandbox PATH is exactly what review.sh needs and nothing else, so adding a
+# tool here is a deliberate act. `tail` is needed by the branch that prints the
+# reviewer output before refusing a verdict-less review.
+COREUTILS=(bash dirname rm wc cat grep tail)
 
 # new_sandbox prints the path of a fresh sandbox directory.
 new_sandbox() {
@@ -316,6 +319,28 @@ t_approve_is_posted_with_the_guarded_flag_set() {
     || fail "the agent ran with --dangerously-skip-permissions"
 }
 
+# The verdict the model actually writes is rarely a bare token. A real 3281-byte
+# review was refused because it carried markdown emphasis, so these 2 tests hold
+# the widened matcher from both sides: it must read the emphasised form, and it
+# must still refuse a verdict word that only appears inside a sentence.
+t_a_markdown_verdict_is_understood() {
+  local sb; sb="$(new_sandbox)"
+  printf 'Where: x.go:1\nWhat: a defect.\n\n**REQUEST_CHANGES**\n' > "$sb/fx/out"
+  run_review "$sb" ${CREDS[@]+"${CREDS[@]}"} -- 1
+  assert_rc_zero
+  assert_stdout_has "verdict: REQUEST_CHANGES"
+  assert_comment_posted
+}
+
+t_a_verdict_inside_a_sentence_is_not_a_verdict() {
+  local sb; sb="$(new_sandbox)"
+  printf 'I would APPROVE this if you fixed the test.\nThis does not REQUEST_CHANGES anything.\n' > "$sb/fx/out"
+  run_review "$sb" ${CREDS[@]+"${CREDS[@]}"} -- 1
+  assert_rc_nonzero
+  assert_stderr_has "no verdict line"
+  assert_no_comment
+}
+
 TESTS=(
   t_usage_requires_pr_number
   t_missing_tool_is_named
@@ -330,6 +355,8 @@ TESTS=(
   t_output_without_a_verdict_is_not_posted
   t_request_changes_is_reported_as_request_changes
   t_approve_is_posted_with_the_guarded_flag_set
+  t_a_markdown_verdict_is_understood
+  t_a_verdict_inside_a_sentence_is_not_a_verdict
 )
 
 # --------------------------------------------------------------------------
@@ -342,6 +369,10 @@ TESTS=(
 # shellcheck disable=SC2016 # the sed text is data, not shell to expand
 mutation_for() {
   case "$1" in
+    # Narrow the pattern back to the bare token this once rejected a real review for.
+    t_a_markdown_verdict_is_understood)          printf 's|^RE_REQUEST_CHANGES=.*|RE_REQUEST_CHANGES="^REQUEST_CHANGES[[:space:]]*$"|' ;;
+    # Drop the anchors so the token matches inside a sentence.
+    t_a_verdict_inside_a_sentence_is_not_a_verdict) printf 's|^RE_APPROVE=.*|RE_APPROVE="APPROVE"|' ;;
     t_usage_requires_pr_number)                  printf '/# guard:usage$/d' ;;
     t_missing_tool_is_named)                     printf '/# guard:tools$/d' ;;
     t_missing_oauth_token)                       printf '/# guard:oauth$/d' ;;
