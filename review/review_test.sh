@@ -48,7 +48,9 @@ fail() { printf '       %s\n' "$*" >&2; exit 1; }
 # The sandbox PATH is exactly what review.sh needs and nothing else, so adding a
 # tool here is a deliberate act. `tail` is needed by the branch that prints the
 # reviewer output before refusing a verdict-less review.
-COREUTILS=(bash dirname rm wc cat grep tail)
+# jq is REAL, not a stub: review.sh parses the agent's event stream with it, so a
+# stub would test nothing. git is still a stub, because it is only gated on.
+COREUTILS=(bash dirname rm wc cat grep tail jq)
 
 # new_sandbox prints the path of a fresh sandbox directory.
 new_sandbox() {
@@ -85,7 +87,12 @@ EOF
 #!/usr/bin/env bash
 set -eu
 printf '%s\n' "\$*" >> "$sb/calls/claude.log"
-cat "$sb/fx/out"
+if [ -f "$sb/fx/stream" ]; then
+  cat "$sb/fx/stream"
+else
+  jq -n --rawfile r "$sb/fx/out" \
+    '{type:"result",subtype:"success",is_error:false,result:\$r,total_cost_usd:1.234,num_turns:7,duration_ms:9000,permission_denials:[]}'
+fi
 exit "\$(cat "$sb/fx/rc")"
 EOF
 
@@ -114,16 +121,14 @@ case "\$1 \$2" in
 esac
 EOF
 
-  # git and jq are gated on but never called. A stub that records is enough, and
-  # it also proves that they are never called.
-  for c in git jq; do
-    cat > "$sb/bin/$c" <<EOF
+  # git is gated on but never called. A stub that records is enough, and it also
+  # proves that it is never called.
+  cat > "$sb/bin/git" <<EOF
 #!/usr/bin/env bash
-printf '%s\n' "\$*" >> "$sb/calls/$c.log"
+printf '%s\n' "\$*" >> "$sb/calls/git.log"
 EOF
-  done
 
-  chmod +x "$sb/bin/mktemp" "$sb/bin/claude" "$sb/bin/gh" "$sb/bin/git" "$sb/bin/jq"
+  chmod +x "$sb/bin/mktemp" "$sb/bin/claude" "$sb/bin/gh" "$sb/bin/git"
 
   # Default fixtures: a real-looking diff, no earlier review, an approving
   # reviewer that exits 0. Each test overrides what it is about.
@@ -148,7 +153,7 @@ run_review() {
     if [ "$seen" -eq 1 ]; then args+=("$a"); else envs+=("$a"); fi
   done
   set +e
-  env -i PATH="$SB/bin" HOME="$SB/home" \
+  env -i PATH="$SB/bin" HOME="$SB/home" REVIEW_STREAM_FILE="$SB/stream.jsonl" \
     ${envs[@]+"${envs[@]}"} \
     "$SB/bin/bash" "$SB/review/review.sh" ${args[@]+"${args[@]}"} \
     > "$SB/stdout" 2> "$SB/stderr"
@@ -341,6 +346,67 @@ t_a_verdict_inside_a_sentence_is_not_a_verdict() {
   assert_no_comment
 }
 
+# ---- the event stream: capture, and the failures it makes visible ----
+
+# A result event, built from named parts so each test states only what it is about.
+stream_result() { # stream_result <text> <is_error> <denials-json>
+  jq -n --arg r "$1" --argjson e "$2" --argjson d "$3" \
+    '{type:"result",subtype:"success",is_error:$e,result:$r,total_cost_usd:2.5,num_turns:11,duration_ms:42000,permission_denials:$d}'
+}
+
+t_the_run_summary_and_the_stream_are_kept() {
+  local sb; sb="$(new_sandbox)"
+  printf '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read"}]}}\n' > "$sb/fx/stream"
+  printf '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read"}]}}\n' >> "$sb/fx/stream"
+  stream_result 'Where: x.go:1
+What: a defect.
+
+REQUEST_CHANGES' false '[]' >> "$sb/fx/stream"
+  run_review "$sb" ${CREDS[@]+"${CREDS[@]}"} -- 1
+  assert_rc_zero
+  # The numbers that make a bad review diagnosable without paying for another.
+  assert_stdout_has "cost      \$2.5"
+  assert_stdout_has "turns     11"
+  assert_stdout_has "tools     Read x2"
+  assert_comment_posted
+  # The stream itself must survive the run: the workflow keeps it as an artifact.
+  [ -s "$SB/stream.jsonl" ] || fail "the event stream was not kept"
+}
+
+t_a_stream_with_no_result_event_is_refused() {
+  local sb; sb="$(new_sandbox)"
+  printf '{"type":"system","subtype":"init"}\n{"type":"assistant","message":{"content":[]}}\n' > "$sb/fx/stream"
+  run_review "$sb" ${CREDS[@]+"${CREDS[@]}"} -- 1
+  assert_rc_nonzero
+  assert_stderr_has "no result event"
+  assert_no_comment
+}
+
+t_an_agent_error_is_not_posted() {
+  local sb; sb="$(new_sandbox)"
+  stream_result 'I ran out of budget half way.
+
+APPROVE' true '[]' > "$sb/fx/stream"
+  run_review "$sb" ${CREDS[@]+"${CREDS[@]}"} -- 1
+  assert_rc_nonzero
+  assert_stderr_has "reported an error"
+  assert_no_comment
+}
+
+# A denial means the agent could not read something it asked for. The review is
+# posted anyway — it is paid for — and then the job fails, loudly.
+t_a_denied_tool_call_is_posted_and_then_fails_the_job() {
+  local sb; sb="$(new_sandbox)"
+  stream_result 'Where: x.go:1
+What: a defect.
+
+REQUEST_CHANGES' false '[{"tool_name":"Read"}]' > "$sb/fx/stream"
+  run_review "$sb" ${CREDS[@]+"${CREDS[@]}"} -- 1
+  assert_comment_posted
+  assert_rc_nonzero
+  assert_stderr_has "were denied"
+}
+
 TESTS=(
   t_usage_requires_pr_number
   t_missing_tool_is_named
@@ -357,6 +423,10 @@ TESTS=(
   t_approve_is_posted_with_the_guarded_flag_set
   t_a_markdown_verdict_is_understood
   t_a_verdict_inside_a_sentence_is_not_a_verdict
+  t_the_run_summary_and_the_stream_are_kept
+  t_a_stream_with_no_result_event_is_refused
+  t_an_agent_error_is_not_posted
+  t_a_denied_tool_call_is_posted_and_then_fails_the_job
 )
 
 # --------------------------------------------------------------------------
@@ -373,6 +443,10 @@ mutation_for() {
     t_a_markdown_verdict_is_understood)          printf 's|^RE_REQUEST_CHANGES=.*|RE_REQUEST_CHANGES="^REQUEST_CHANGES[[:space:]]*$"|' ;;
     # Drop the anchors so the token matches inside a sentence.
     t_a_verdict_inside_a_sentence_is_not_a_verdict) printf 's|^RE_APPROVE=.*|RE_APPROVE="APPROVE"|' ;;
+    t_the_run_summary_and_the_stream_are_kept)   printf '/# capture:summary$/d' ;;
+    t_a_stream_with_no_result_event_is_refused)  printf '/# guard:no-result-event$/d' ;;
+    t_an_agent_error_is_not_posted)              printf '/# guard:agent-error$/d' ;;
+    t_a_denied_tool_call_is_posted_and_then_fails_the_job) printf '/# guard:denials$/d' ;;
     t_usage_requires_pr_number)                  printf '/# guard:usage$/d' ;;
     t_missing_tool_is_named)                     printf '/# guard:tools$/d' ;;
     t_missing_oauth_token)                       printf '/# guard:oauth$/d' ;;

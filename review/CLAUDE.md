@@ -40,6 +40,35 @@ enforced by the gates. Do not report them.
    tool, a `continue-on-error`. The standing rule is that warnings are errors and
    a missing tool is a failure, never a silent skip.
 
+## The process questions
+
+The code can be correct and the change still be unsafe, because the way it was
+made hides a defect. Ask these too. Each one is here because it failed in this
+organization, and the failure is named so you can see the shape of it.
+
+1. **Can each new or changed check actually fail?** 4 checks shipped here that
+   passed while the thing they checked was broken: a verifier that printed FAIL
+   and exited 0, an image assertion that passed on an image whose runner died in
+   under a second, a lint job whose tool was never installed, and a probe that
+   verified itself in a shell that had already loaded what it was testing for. If
+   the change adds a check, name the input that would make it red. If nothing
+   would, that is the finding.
+2. **Is a failure reported as a pass anywhere?** A `|| true`, a
+   `continue-on-error`, a swallowed exit code, a skip when a tool or a token is
+   absent, or a `while` loop in a pipeline whose counter dies in the subshell.
+   The standing rule is that a warning is an error and a missing tool is a
+   failure, never a silent skip.
+3. **Does the description match the diff, including what is missing?** A pull
+   request titled "remove 1 step" removed 4, and 3 of them worked. State the gap
+   when the title, the body and the diff disagree.
+4. **Is the abstraction in the right place?** A fix that must be repeated is not
+   a fix. If the same change would be needed again in the next repository or the
+   next image, name the single home it belongs in.
+5. **Was a decision recorded where a decision was made?** A choice that closes an
+   option belongs in `docs/architecture/adr/`, and a known gap belongs in the
+   debt register. A decision left only in prose is lost.
+6. **Was a generated file edited by hand?** Find the generator and say so.
+
 ## The wider context
 
 This is 1 repository in `gophersys`. Ask whether the change:
@@ -53,7 +82,12 @@ Say so plainly when it does, and name the file.
 
 ## How to write a finding
 
-Each one carries 4 things:
+Your output is posted to the pull request without a change. Begin it with the
+first heading of the review. Do not write a preamble, and do not narrate what you
+are about to do: the reader sees only the comment, and a sentence such as "Now I
+have a complete picture, let me write the review" is noise in it.
+
+Each finding carries 4 things:
 
 | | |
 | --- | --- |
