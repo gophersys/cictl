@@ -27,6 +27,11 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MODEL="${REVIEW_MODEL:-claude-opus-4-5}"
 BUDGET_USD="${REVIEW_BUDGET_USD:-25}"
 MAX_TURNS="${REVIEW_MAX_TURNS:-40}"
+# The round ceiling Mateo asked for: bounded, and configurable in 1 place.
+MAX_ROUNDS="${REVIEW_MAX_ROUNDS:-2}"
+# The footer that marks a comment as this agent's. It is how a round is counted,
+# so it must be posted with every review and must never be edited by hand.
+MARKER="<!-- gophersys-review-agent -->"
 # The full event stream. The workflow keeps it as an artifact, so it must outlive
 # the run and therefore is NOT a temp file.
 STREAM_FILE="${REVIEW_STREAM_FILE:-review-stream.jsonl}"
@@ -78,10 +83,19 @@ log "diff: $(wc -l < "$diff_file") lines"
 
 # Round 2 sees the previous review, so it can judge whether each finding is now
 # resolved instead of repeating it.
-previous="$(gh pr view "$PR" --json reviews \
-  --jq '[.reviews[] | select(.author.login == "github-actions") | .body] | last // ""' 2>/dev/null || true)"
-round=1
-[ -n "$previous" ] && round=2
+#
+# Count COMMENTS, not reviews. This script posts with `gh pr comment`, which
+# creates an issue comment and never a formal review, so a version of this that
+# read `--json reviews` found nothing every time: every run was round 1, the
+# agent never saw its own earlier findings, and the round ceiling never engaged.
+# Each push then bought a fresh full-price review. MARKER is what makes a comment
+# ours, so a human quoting the agent cannot be counted as a round.
+previous="$(gh pr view "$PR" --json comments \
+  --jq "[.comments[] | select(.body | contains(\"$MARKER\")) | .body] | last // \"\"" 2>/dev/null || true)"
+rounds_done="$(gh pr view "$PR" --json comments \
+  --jq "[.comments[] | select(.body | contains(\"$MARKER\"))] | length" 2>/dev/null || echo 0)"
+round=$(( rounds_done + 1 ))
+[ "$round" -le "$MAX_ROUNDS" ] || die "round ${round} would exceed the ${MAX_ROUNDS}-round limit; ${rounds_done} review(s) already posted on #${PR}" # guard:round-limit
 
 {
   printf 'Review pull request #%s in %s. This is round %s of 2.\n\n' \
@@ -181,9 +195,10 @@ log "verdict: ${event}"
 # GITHUB_TOKEN cannot APPROVE its own repository's pull request, and an approval
 # from it would not satisfy a required review anyway. Post the body as a comment
 # and let the verdict line carry the meaning.
+printf '\n\n%s\n' "$MARKER" >> "$out_file" # post:marker
 gh pr comment "$PR" --body-file "$out_file" || die "could not post the review comment" # post:comment
 
-log "posted round ${round} review on #${PR}"
+log "posted round ${round} of ${MAX_ROUNDS} review on #${PR}"
 log "full event stream: ${STREAM_FILE}"
 [ "$event" = "APPROVE" ] || log "changes requested — fix the findings and push again"
 

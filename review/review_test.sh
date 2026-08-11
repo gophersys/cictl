@@ -103,8 +103,14 @@ printf '%s\n' "\$*" >> "$sb/calls/gh.log"
 case "\$1 \$2" in
   'pr diff') cat "$sb/fx/diff" ;;
   'pr view')
+    # Apply --jq with real jq, as gh does. A stub that returned the raw fixture
+    # would teach the test that gh does not filter, which is a lie the script
+    # then depends on.
+    filter=""; prev=""
+    for a in "\$@"; do [ "\$prev" = "--jq" ] && filter="\$a"; prev="\$a"; done
     case "\$*" in
-      *reviews*) cat "$sb/fx/previous" ;;
+      *comments*)
+        if [ -n "\$filter" ]; then jq -r "\$filter" "$sb/fx/comments"; else cat "$sb/fx/comments"; fi ;;
       *title*)   printf 'a stub pull request title\n' ;;
       *body*)    printf 'a stub pull request body\n' ;;
       *) printf 'gh stub: unmodelled pr view: %s\n' "\$*" >&2; exit 64 ;;
@@ -133,7 +139,8 @@ EOF
   # Default fixtures: a real-looking diff, no earlier review, an approving
   # reviewer that exits 0. Each test overrides what it is about.
   printf 'diff --git a/x.go b/x.go\n--- a/x.go\n+++ b/x.go\n+var x = 1\n' > "$sb/fx/diff"
-  : > "$sb/fx/previous"
+  # No earlier review by default. gh returns a JSON object, so the fixture is one.
+  printf '{"comments":[]}\n' > "$sb/fx/comments"
   printf 'Where: x.go:1\nWhat: nothing that blocks the merge.\n\nAPPROVE\n' > "$sb/fx/out"
   printf '0\n' > "$sb/fx/rc"
 
@@ -431,6 +438,58 @@ t_an_empty_stream_is_refused() {
   assert_no_comment
 }
 
+# rounds_with <n> writes a comments fixture holding n reviews by this agent, plus
+# a human comment that quotes the marker text without being a review.
+rounds_with() {
+  jq -n --argjson n "$1" \
+    '{comments: ([range($n) | {body: "a finding\n\n<!-- gophersys-review-agent -->"}] + [{body: "I disagree with the agent"}])}'
+}
+
+t_the_first_run_is_round_1() {
+  local sb; sb="$(new_sandbox)"
+  run_review "$sb" ${CREDS[@]+"${CREDS[@]}"} -- 1
+  assert_rc_zero
+  assert_stdout_has "posted round 1 of 2"
+}
+
+t_a_second_run_is_round_2_and_sees_the_first() {
+  local sb; sb="$(new_sandbox)"
+  rounds_with 1 > "$sb/fx/comments"
+  run_review "$sb" ${CREDS[@]+"${CREDS[@]}"} -- 1
+  assert_rc_zero
+  assert_stdout_has "posted round 2 of 2"
+}
+
+# The ceiling Mateo asked for. Without it every push buys a fresh full-price
+# review, which is a spend defect and not only a logic one.
+t_a_third_run_refuses_before_it_costs_anything() {
+  local sb; sb="$(new_sandbox)"
+  rounds_with 2 > "$sb/fx/comments"
+  run_review "$sb" ${CREDS[@]+"${CREDS[@]}"} -- 1
+  assert_rc_nonzero
+  assert_stderr_has "would exceed the 2-round limit"
+  assert_not_called claude
+  assert_no_comment
+}
+
+t_the_round_ceiling_is_configurable() {
+  local sb; sb="$(new_sandbox)"
+  rounds_with 2 > "$sb/fx/comments"
+  run_review "$sb" ${CREDS[@]+"${CREDS[@]}"} REVIEW_MAX_ROUNDS=3 -- 1
+  assert_rc_zero
+  assert_stdout_has "posted round 3 of 3"
+}
+
+# The marker is what makes a comment ours. Without it on the posted body, the
+# next run cannot count this round and the ceiling never engages.
+t_the_posted_review_carries_the_marker() {
+  local sb; sb="$(new_sandbox)"
+  run_review "$sb" ${CREDS[@]+"${CREDS[@]}"} -- 1
+  assert_rc_zero
+  grep -qF -- '<!-- gophersys-review-agent -->' "$SB/posted_body" \
+    || fail "the posted review carries no marker, so the next round cannot count it"
+}
+
 TESTS=(
   t_usage_requires_pr_number
   t_missing_tool_is_named
@@ -453,6 +512,11 @@ TESTS=(
   t_a_denied_tool_call_is_posted_and_then_fails_the_job
   t_the_agent_is_given_a_read_only_tool_set
   t_an_empty_stream_is_refused
+  t_the_first_run_is_round_1
+  t_a_second_run_is_round_2_and_sees_the_first
+  t_a_third_run_refuses_before_it_costs_anything
+  t_the_round_ceiling_is_configurable
+  t_the_posted_review_carries_the_marker
 )
 
 # every_marker_is_covered fails when review.sh carries a `# guard:` or
@@ -489,6 +553,11 @@ mutation_for() {
     t_a_denied_tool_call_is_posted_and_then_fails_the_job) printf '/# guard:denials$/d' ;;
     t_the_agent_is_given_a_read_only_tool_set)   printf '/# capture:allowed-tools$/d' ;;
     t_an_empty_stream_is_refused)                printf '/# guard:empty-stream$/d' ;;
+    t_the_first_run_is_round_1)                  printf 's|^round=.*|round=99|' ;;
+    t_a_second_run_is_round_2_and_sees_the_first) printf 's|^round=.*|round=1|' ;;
+    t_a_third_run_refuses_before_it_costs_anything) printf '/# guard:round-limit$/d' ;;
+    t_the_round_ceiling_is_configurable)         printf 's|^MAX_ROUNDS=.*|MAX_ROUNDS=2|' ;;
+    t_the_posted_review_carries_the_marker)      printf '/# post:marker$/d' ;;
     t_usage_requires_pr_number)                  printf '/# guard:usage$/d' ;;
     t_missing_tool_is_named)                     printf '/# guard:tools$/d' ;;
     t_missing_oauth_token)                       printf '/# guard:oauth$/d' ;;
