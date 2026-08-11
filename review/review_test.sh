@@ -422,6 +422,15 @@ t_the_agent_is_given_a_read_only_tool_set() {
   done
 }
 
+t_an_empty_stream_is_refused() {
+  local sb; sb="$(new_sandbox)"
+  : > "$sb/fx/stream"
+  run_review "$sb" ${CREDS[@]+"${CREDS[@]}"} -- 1
+  assert_rc_nonzero
+  assert_stderr_has "produced no events"
+  assert_no_comment
+}
+
 TESTS=(
   t_usage_requires_pr_number
   t_missing_tool_is_named
@@ -443,7 +452,22 @@ TESTS=(
   t_an_agent_error_is_not_posted
   t_a_denied_tool_call_is_posted_and_then_fails_the_job
   t_the_agent_is_given_a_read_only_tool_set
+  t_an_empty_stream_is_refused
 )
+
+# every_marker_is_covered fails when review.sh carries a `# guard:` or
+# `# capture:` marker that no mutation names. The suite already proved the other
+# direction — every test states how it is proven — and that asymmetry is how
+# `guard:empty-stream` shipped with a marker, no test, and a suite reporting
+# "all 20 guards hold". A guard nobody proves is a guard nobody has.
+every_marker_is_covered() {
+  local marker name uncovered=()
+  while IFS= read -r marker; do
+    name="${marker##*# }"
+    grep -qF -- "$name" <<< "$ALL_MUTATIONS" || uncovered+=("$name")
+  done < <(grep -oE '# (guard|capture):[a-z-]+' "$REVIEW_SH" | sort -u)
+  [ "${#uncovered[@]}" -eq 0 ] || die "these markers in review.sh have no test: ${uncovered[*]}"
+}
 
 # --------------------------------------------------------------------------
 # the mutations
@@ -464,6 +488,7 @@ mutation_for() {
     t_an_agent_error_is_not_posted)              printf '/# guard:agent-error$/d' ;;
     t_a_denied_tool_call_is_posted_and_then_fails_the_job) printf '/# guard:denials$/d' ;;
     t_the_agent_is_given_a_read_only_tool_set)   printf '/# capture:allowed-tools$/d' ;;
+    t_an_empty_stream_is_refused)                printf '/# guard:empty-stream$/d' ;;
     t_usage_requires_pr_number)                  printf '/# guard:usage$/d' ;;
     t_missing_tool_is_named)                     printf '/# guard:tools$/d' ;;
     t_missing_oauth_token)                       printf '/# guard:oauth$/d' ;;
@@ -513,6 +538,9 @@ for t in "${TESTS[@]}"; do
     failures=$((failures + 1))
   fi
 done
+
+ALL_MUTATIONS="$(for t in "${TESTS[@]}"; do mutation_for "$t"; printf '\n'; done)"
+every_marker_is_covered
 
 info "phase 2 — mutation: each guard removed must make its own test fail"
 for t in "${TESTS[@]}"; do
