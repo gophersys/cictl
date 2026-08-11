@@ -407,6 +407,21 @@ REQUEST_CHANGES' false '[{"tool_name":"Read"}]' > "$sb/fx/stream"
   assert_stderr_has "were denied"
 }
 
+# The reviewer's tool set is an allowlist, and it must stay read-only. A write
+# tool reaching this list would let a reviewer edit the branch it is judging.
+t_the_agent_is_given_a_read_only_tool_set() {
+  local sb; sb="$(new_sandbox)"
+  run_review "$sb" ${CREDS[@]+"${CREDS[@]}"} -- 1
+  assert_rc_zero
+  grep -q -- '--allowedTools' "$SB/calls/claude.log" || fail "the agent ran with no allowlist at all"
+  # It must be able to read the cross-repository context it was denied before.
+  grep -q -- 'Bash(gh pr view:\*)' "$SB/calls/claude.log" || fail "the agent cannot read a referenced pull request"
+  local t
+  for t in Write Edit NotebookEdit 'Bash(gh pr comment' 'Bash(gh pr merge' 'Bash(rm' 'Bash(git push'; do
+    ! grep -qF -- "$t" "$SB/calls/claude.log" || fail "a write tool reached the allowlist: $t"
+  done
+}
+
 TESTS=(
   t_usage_requires_pr_number
   t_missing_tool_is_named
@@ -427,6 +442,7 @@ TESTS=(
   t_a_stream_with_no_result_event_is_refused
   t_an_agent_error_is_not_posted
   t_a_denied_tool_call_is_posted_and_then_fails_the_job
+  t_the_agent_is_given_a_read_only_tool_set
 )
 
 # --------------------------------------------------------------------------
@@ -447,6 +463,7 @@ mutation_for() {
     t_a_stream_with_no_result_event_is_refused)  printf '/# guard:no-result-event$/d' ;;
     t_an_agent_error_is_not_posted)              printf '/# guard:agent-error$/d' ;;
     t_a_denied_tool_call_is_posted_and_then_fails_the_job) printf '/# guard:denials$/d' ;;
+    t_the_agent_is_given_a_read_only_tool_set)   printf '/# capture:allowed-tools$/d' ;;
     t_usage_requires_pr_number)                  printf '/# guard:usage$/d' ;;
     t_missing_tool_is_named)                     printf '/# guard:tools$/d' ;;
     t_missing_oauth_token)                       printf '/# guard:oauth$/d' ;;
