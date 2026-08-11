@@ -28,7 +28,7 @@ MODEL="${REVIEW_MODEL:-claude-opus-4-5}"
 BUDGET_USD="${REVIEW_BUDGET_USD:-25}"
 MAX_TURNS="${REVIEW_MAX_TURNS:-40}"
 # The round ceiling Mateo asked for: bounded, and configurable in 1 place.
-MAX_ROUNDS="${REVIEW_MAX_ROUNDS:-2}"
+MAX_ROUNDS="${REVIEW_MAX_ROUNDS:-2}" # guard:round-limit
 # The footer that marks a comment as this agent's. It is how a round is counted,
 # so it must be posted with every review and must never be edited by hand.
 MARKER="<!-- gophersys-review-agent -->"
@@ -95,7 +95,14 @@ previous="$(gh pr view "$PR" --json comments \
 rounds_done="$(gh pr view "$PR" --json comments \
   --jq "[.comments[] | select(.body | contains(\"$MARKER\"))] | length" 2>/dev/null || echo 0)"
 round=$(( rounds_done + 1 ))
-[ "$round" -le "$MAX_ROUNDS" ] || die "round ${round} would exceed the ${MAX_ROUNDS}-round limit; ${rounds_done} review(s) already posted on #${PR}" # guard:round-limit
+# Reaching the ceiling is the design working, not a failure. The first version
+# exited 1 here, which turned every pull request that took a third push red for
+# the rest of its life — and a check that is permanently red for a correct reason
+# is exactly what teaches people to ignore red.
+if [ "$round" -gt "$MAX_ROUNDS" ]; then
+  log "${rounds_done} review(s) already posted on #${PR}; the ${MAX_ROUNDS}-round limit is reached, so this push is not reviewed"
+  exit 0
+fi
 
 {
   printf 'Review pull request #%s in %s. This is round %s of 2.\n\n' \

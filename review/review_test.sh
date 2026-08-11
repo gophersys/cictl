@@ -480,8 +480,11 @@ t_a_third_run_refuses_before_it_costs_anything() {
   local sb; sb="$(new_sandbox)"
   rounds_with 2 > "$sb/fx/comments"
   run_review "$sb" ${CREDS[@]+"${CREDS[@]}"} -- 1
-  assert_rc_nonzero
-  assert_stderr_has "would exceed the 2-round limit"
+  # Exit 0: the ceiling is the design working. A job that is permanently red for
+  # a correct reason teaches people to ignore red.
+  assert_rc_zero
+  assert_stdout_has "limit is reached"
+  # The point of the ceiling is spend. The agent must never be reached.
   assert_not_called claude
   assert_no_comment
 }
@@ -534,18 +537,54 @@ TESTS=(
   t_the_posted_review_carries_the_marker
 )
 
-# every_marker_is_covered fails when review.sh carries a `# guard:` or
-# `# capture:` marker that no mutation names. The suite already proved the other
-# direction — every test states how it is proven — and that asymmetry is how
-# `guard:empty-stream` shipped with a marker, no test, and a suite reporting
-# "all 20 guards hold". A guard nobody proves is a guard nobody has.
+# MARKER_COVERAGE maps every marker in review.sh to the test that proves it.
+# It is written out by hand on purpose: a mutation can narrow a pattern instead of
+# deleting a line, so the marker name does not always appear in the sed
+# expression, and matching on the expression text silently missed every
+# substitution mutation.
+MARKER_COVERAGE="
+guard:usage                 t_usage_requires_pr_number
+guard:tools                 t_missing_tool_is_named
+guard:oauth                 t_missing_oauth_token
+guard:gh-token              t_missing_gh_token
+guard:api-key               t_api_key_outranks_the_token
+guard:auth-token            t_auth_token_outranks_the_token
+guard:instructions          t_missing_instructions
+guard:temp-lifetime         t_temp_files_are_removed_when_the_run_fails
+guard:empty-diff            t_empty_diff_is_refused
+guard:empty-stream          t_an_empty_stream_is_refused
+guard:no-result-event       t_a_stream_with_no_result_event_is_refused
+guard:agent-error           t_an_agent_error_is_not_posted
+guard:empty-output          t_empty_reviewer_output_is_not_posted
+guard:verdict               t_output_without_a_verdict_is_not_posted
+guard:denials               t_a_denied_read_is_posted_and_then_fails_the_job
+guard:round-limit           t_a_third_run_refuses_before_it_costs_anything
+capture:summary             t_the_run_summary_and_the_stream_are_kept
+capture:allowed-tools       t_the_agent_is_given_a_read_only_tool_set
+verdict:request-changes     t_request_changes_is_reported_as_request_changes
+verdict:approve             t_a_verdict_inside_a_sentence_is_not_a_verdict
+post:marker                 t_the_posted_review_carries_the_marker
+post:comment                t_approve_is_posted_with_the_guarded_flag_set
+"
+
+# every_marker_is_covered fails when review.sh carries a marker that no test
+# claims, or when a claimed test does not exist. The suite already proved that
+# every test states how it is proven; this is the other direction, and that
+# asymmetry is how guard:empty-stream once shipped with a marker, no test, and a
+# suite reporting that all guards held.
 every_marker_is_covered() {
-  local marker name uncovered=()
+  local marker name test uncovered=() missing=()
   while IFS= read -r marker; do
     name="${marker##*# }"
-    grep -qF -- "$name" <<< "$ALL_MUTATIONS" || uncovered+=("$name")
-  done < <(grep -oE '# (guard|capture):[a-z-]+' "$REVIEW_SH" | sort -u)
+    test="$(awk -v m="$name" '$1 == m {print $2}' <<< "$MARKER_COVERAGE")"
+    if [ -z "$test" ]; then
+      uncovered+=("$name")
+    elif ! grep -qF -- "$test" <<< "${TESTS[*]}"; then
+      missing+=("$name -> $test")
+    fi
+  done < <(grep -oE '# (guard|capture|verdict|post):[a-z-]+' "$REVIEW_SH" | sort -u)
   [ "${#uncovered[@]}" -eq 0 ] || die "these markers in review.sh have no test: ${uncovered[*]}"
+  [ "${#missing[@]}" -eq 0 ] || die "these markers name a test that does not exist: ${missing[*]}"
 }
 
 # --------------------------------------------------------------------------
@@ -572,7 +611,8 @@ mutation_for() {
     t_an_empty_stream_is_refused)                printf '/# guard:empty-stream$/d' ;;
     t_the_first_run_is_round_1)                  printf 's|^round=.*|round=99|' ;;
     t_a_second_run_is_round_2_and_sees_the_first) printf 's|^round=.*|round=1|' ;;
-    t_a_third_run_refuses_before_it_costs_anything) printf '/# guard:round-limit$/d' ;;
+    # Raise the ceiling out of the way, so a third round proceeds and spends.
+    t_a_third_run_refuses_before_it_costs_anything) printf 's|^MAX_ROUNDS=.*|MAX_ROUNDS=99|' ;;
     t_the_round_ceiling_is_configurable)         printf 's|^MAX_ROUNDS=.*|MAX_ROUNDS=2|' ;;
     t_the_posted_review_carries_the_marker)      printf '/# post:marker$/d' ;;
     t_usage_requires_pr_number)                  printf '/# guard:usage$/d' ;;
@@ -625,7 +665,6 @@ for t in "${TESTS[@]}"; do
   fi
 done
 
-ALL_MUTATIONS="$(for t in "${TESTS[@]}"; do mutation_for "$t"; printf '\n'; done)"
 every_marker_is_covered
 
 info "phase 2 — mutation: each guard removed must make its own test fail"
