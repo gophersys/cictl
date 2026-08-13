@@ -93,11 +93,13 @@ new_tree() {
 # edit_file rewrites a file through an awk program. awk, not sed: BSD sed and
 # GNU sed disagree about a newline in a replacement, and this suite must give
 # the same answer on a workstation and in the runner image.
+# edit_file <path> <awk program> [awk assignments...]
 edit_file() {
   local path="$1" program="$2" tmp
+  shift 2
   [ -f "$path" ] || die "cannot edit $path: it does not exist"
   tmp="$(mktemp "$WORK/edit.XXXXXX")"
-  awk "$program" "$path" > "$tmp"
+  awk "$@" "$program" "$path" > "$tmp"
   mv "$tmp" "$path"
 }
 
@@ -122,6 +124,65 @@ count_matching() { awk -v re="$2" '$0 ~ re { n++ } END { print n + 0 }' "$1"; }
 # tokens_matching prints every distinct substring of a file that matches.
 tokens_matching() {
   awk -v re="$2" '{ s = $0; while (match(s, re)) { print substr(s, RSTART, RLENGTH); s = substr(s, RSTART + RLENGTH) } }' "$1" | sort -u
+}
+
+# --------------------------------------------------------------------------
+# reading the workflow
+# --------------------------------------------------------------------------
+#
+# These 3 read structure rather than text, because 2 assertions below are about
+# what the workflow MEANS and a substring cannot tell that. yq is not used and
+# cannot be: it answers 15 for a file that declares `timeout-minutes` twice, so
+# the very defect this suite exists to catch is invisible to it.
+
+# job_timeouts prints "<job> <count> <value>" for every job in a workflow, where
+# count is how many times that job declares timeout-minutes. Under `jobs:` a key
+# at 2 spaces is a job name and nothing else is, so the nesting is readable
+# without a YAML parser.
+job_timeouts() {
+  awk '
+    /^jobs:[ \t]*$/ { in_jobs = 1; next }
+    in_jobs && /^[^ \t#]/ { in_jobs = 0 }
+    in_jobs && /^  [A-Za-z0-9_-]+:[ \t]*$/ {
+      job = $0; sub(/^[ \t]*/, "", job); sub(/:.*$/, "", job)
+      n++; order[n] = job; count[job] = count[job] + 0; value[job] = ""
+      next
+    }
+    in_jobs && job != "" && /^[ \t]*timeout-minutes:/ {
+      count[job]++
+      v = $0; sub(/^[ \t]*timeout-minutes:[ \t]*/, "", v); sub(/[ \t]*(#.*)?$/, "", v)
+      value[job] = v
+    }
+    END { for (i = 1; i <= n; i++) printf "%s %d %s\n", order[i], count[order[i]], value[order[i]] }
+  ' "$1"
+}
+
+# sha_env_name prints the environment key that carries github.job_workflow_sha:
+# the name the workflow gives to the commit it ASKED for.
+sha_env_name() {
+  awk 'match($0, /^[ \t]*[A-Za-z_][A-Za-z0-9_]*:[ \t]*\$\{\{[^}]*job_workflow_sha[^}]*\}\}[ \t]*$/) {
+    k = $0; sub(/^[ \t]*/, "", k); sub(/:.*$/, "", k); print k
+  }' "$1"
+}
+
+# pin_comparison prints "<left>|<right>": the 2 operands of the test inside the
+# guard:pin line, stripped of quoting. It reads the bracket and not the whole
+# line on purpose — an error message that still names the right variable is how a
+# guard that compares a value to ITSELF reads as correct.
+pin_comparison() {
+  awk '
+    $0 ~ /# guard:pin$/ {
+      line = $0
+      if (match(line, /\[[^]]*\]/) == 0) next
+      inner = substr(line, RSTART + 1, RLENGTH - 2)
+      if (match(inner, /[ \t]+(!=|==|=)[ \t]+/) == 0) next
+      l = substr(inner, 1, RSTART - 1)
+      r = substr(inner, RSTART + RLENGTH)
+      gsub(/^[ \t]+|[ \t]+$/, "", l); gsub(/^[ \t]+|[ \t]+$/, "", r)
+      gsub(/["{}]/, "", l); gsub(/["{}]/, "", r)
+      printf "%s|%s\n", l, r
+    }
+  ' "$1"
 }
 
 # --------------------------------------------------------------------------
@@ -157,6 +218,75 @@ t_the_reviewer_is_pinned_to_this_workflows_own_commit() {
   fi
   if ! printf '%s\n' "$guard" | grep -qE 'exit[[:space:]]+[1-9]'; then
     fail "the pin guard never exits non-zero, so a checkout at the wrong commit would be reviewed anyway: $guard"
+  fi
+
+  # Everything above this line is SHAPE, and shape is not enough: a guard that
+  # compares a value to itself ends in `# guard:pin`, contains `exit 1`, and
+  # holds nothing at all. What follows reads the comparison.
+  local requested comparison left right observed
+  requested="$(sha_env_name "$wf")"
+  if [ -z "$requested" ]; then
+    fail "no environment key in pr-review.yml carries github.job_workflow_sha, so nothing in the job names the commit that was asked for and the guard has nothing to compare against"
+  fi
+  comparison="$(pin_comparison "$wf")"
+  if [ -z "$comparison" ]; then
+    fail "the pin guard is not a comparison; it cannot tell what arrived from what was asked for: $guard"
+  fi
+  left="${comparison%%|*}"
+  right="${comparison#*|}"
+  if [ "$left" = "$right" ]; then
+    fail "the pin guard compares '$left' to itself, so it passes whatever arrived. Deleting it and defanging it are the same defect"
+  fi
+  if [ "$left" = "\$$requested" ]; then
+    observed="$right"
+  elif [ "$right" = "\$$requested" ]; then
+    observed="$left"
+  else
+    fail "the pin guard compares '$left' with '$right', and neither is \$$requested — the commit the caller asked for. It is checking something else"
+  fi
+
+  # The other side must be what ARRIVED. A variable assigned from the requested
+  # sha instead of from the checkout compares 2 different names holding 1 value,
+  # which is a self-comparison wearing a disguise.
+  if ! printf '%s\n' "$observed" | grep -qE '^\$[A-Za-z_][A-Za-z0-9_]*$'; then
+    fail "the observed side of the pin guard is '$observed', which is not a plain shell variable this suite can trace back to the checkout"
+  fi
+  local observed_name="${observed#\$}"
+  if [ "$(count_matching "$wf" "^[ \t]*${observed_name}=.*git")" -eq 0 ]; then
+    fail "the pin guard reads \$$observed_name as the checkout it got, but no line assigns $observed_name from git. Nothing observes the commit that actually arrived"
+  fi
+}
+
+# actionlint reports a DUPLICATE key and says nothing about an absent one, and a
+# duplicate is only half of this defect. A job with no limit inherits GitHub's
+# default of 360 minutes: 6 hours of 1 slot on a pool with 2, held by a job that
+# is already hung. The 8 lines of comment above the key argue exactly that, and
+# a comment is not a check.
+t_the_review_job_has_a_time_limit() {
+  local wf; wf="$(sut_pr_review)"
+  assert_the_workflow_exists "$wf"
+
+  local line job count value jobs=0
+  while IFS= read -r line; do
+    [ -n "$line" ] || continue
+    jobs=$((jobs + 1))
+    job="${line%% *}"
+    value="${line#* }"
+    count="${value%% *}"
+    value="${value#* }"
+    if [ "$count" -eq 0 ]; then
+      fail "the '$job' job declares no timeout-minutes, so it inherits GitHub's default of 360 minutes and one hung review holds a slot for 6 hours. actionlint is silent about an absent key, so this is the only check that would see it"
+    fi
+    if [ "$count" -ne 1 ]; then
+      fail "the '$job' job declares timeout-minutes $count times. That is invalid workflow YAML: GitHub answers with a startup failure that attaches NO check to the pull request, so the job reads as absent rather than broken"
+    fi
+    if ! printf '%s\n' "$value" | grep -qE '^[1-9][0-9]*$'; then
+      fail "the '$job' job sets timeout-minutes to '$value', which is not a positive whole number of minutes"
+    fi
+  done < <(job_timeouts "$wf")
+
+  if [ "$jobs" -eq 0 ]; then
+    fail "pr-review.yml declares no jobs at all, so there is nothing here to limit"
   fi
 }
 
@@ -256,6 +386,7 @@ TESTS=(
   t_the_reviewer_is_pinned_to_this_workflows_own_commit
   t_the_one_home_points_at_something_that_exists
   t_the_credential_stays_on_the_pool
+  t_the_review_job_has_a_time_limit
   t_no_workflow_has_a_duplicate_key
 )
 
@@ -297,11 +428,13 @@ every_marker_is_covered() {
 stimuli_for() {
   case "$1" in
     t_the_reviewer_is_pinned_to_this_workflows_own_commit)
-      printf '%s\n' pin-to-main no-pin-guard ;;
+      printf '%s\n' pin-to-main no-pin-guard defanged-pin pin-ignores-the-requested-sha pin-observes-nothing ;;
     t_the_one_home_points_at_something_that_exists)
       printf '%s\n' rename-the-reviewer ;;
     t_the_credential_stays_on_the_pool)
       printf '%s\n' oauth-secret-in-the-step secrets-input-on-the-call ;;
+    t_the_review_job_has_a_time_limit)
+      printf '%s\n' no-time-limit duplicate-time-limit time-limit-of-zero ;;
     t_no_workflow_has_a_duplicate_key)
       printf '%s\n' duplicate-timeout-key ;;
     *) die "no counter-stimulus is declared for $1; every test must name what would make it fail" ;;
@@ -312,7 +445,7 @@ stimuli_for() {
 apply_stimulus() {
   local stimulus="$1" root="$2" wf="$2/$PR_REVIEW_REL"
   case "$stimulus" in
-    pin-to-main|no-pin-guard|oauth-secret-in-the-step|secrets-input-on-the-call)
+    pin-to-main|no-pin-guard|defanged-pin|pin-ignores-the-requested-sha|pin-observes-nothing|oauth-secret-in-the-step|secrets-input-on-the-call|no-time-limit|duplicate-time-limit|time-limit-of-zero)
       [ -f "$wf" ] || die "the counter-stimulus '$stimulus' needs $PR_REVIEW_REL, and this repository does not have it yet" ;;
   esac
   case "$stimulus" in
@@ -322,6 +455,68 @@ apply_stimulus() {
     # The fetch still asks for the commit, but nothing checks what arrived.
     no-pin-guard)
       edit_file "$wf" '!/# guard:pin$/ { print }' ;;
+    # The guard stays, on 1 line, ending in its marker, still exiting 1 — and
+    # compares the checkout to ITSELF. Deleting a guard and neutering one are
+    # the same defect, and only this stimulus tells them apart.
+    defanged-pin)
+      edit_file "$wf" '
+        {
+          line = $0
+          if (line ~ /# guard:pin$/ && match(line, /\[[^]]*\]/)) {
+            bs = RSTART; bl = RLENGTH
+            inner = substr(line, bs + 1, bl - 2)
+            if (match(inner, /[ \t]+(!=|==|=)[ \t]+/)) {
+              left = substr(inner, 1, RSTART - 1)
+              gsub(/^[ \t]+|[ \t]+$/, "", left)
+              line = substr(line, 1, bs - 1) "[ " left " = " left " ]" substr(line, bs + bl)
+            }
+          }
+          print line
+        }' ;;
+    # The guard compares a real pair, but not against the commit that was asked
+    # for. github.sha is the CALLER's head, not this workflow's own commit.
+    pin-ignores-the-requested-sha)
+      edit_file "$wf" '
+        {
+          line = $0
+          if (line ~ /# guard:pin$/ && match(line, /\[[^]]*\]/)) {
+            bs = RSTART; bl = RLENGTH
+            inner = substr(line, bs + 1, bl - 2)
+            if (match(inner, /[ \t]+(!=|==|=)[ \t]+/)) {
+              left = substr(inner, 1, RSTART - 1)
+              gsub(/^[ \t]+|[ \t]+$/, "", left)
+              line = substr(line, 1, bs - 1) "[ " left " = \"$GITHUB_SHA\" ]" substr(line, bs + bl)
+            }
+          }
+          print line
+        }' ;;
+    # 2 different names holding 1 value. The comparison passes every time, and
+    # nothing ever looks at what the checkout actually is.
+    pin-observes-nothing)
+      local requested
+      requested="$(sha_env_name "$wf")"
+      [ -n "$requested" ] || die "the counter-stimulus 'pin-observes-nothing' needs an environment key carrying github.job_workflow_sha"
+      edit_file "$wf" '
+        {
+          line = $0
+          if (!done && line ~ /^[ \t]*[A-Za-z_][A-Za-z0-9_]*=.*git/) {
+            match(line, /^[ \t]*[A-Za-z_][A-Za-z0-9_]*=/)
+            line = substr(line, 1, RSTART + RLENGTH - 1) "\"$" requested "\""
+            done = 1
+          }
+          print line
+        }' -v "requested=$requested" ;;
+    # The limit disappears and the job inherits 360 minutes. actionlint is
+    # silent about this, which is the whole reason the assertion exists.
+    no-time-limit)
+      edit_file "$wf" '!/^[ \t]*timeout-minutes:/ { print }' ;;
+    # The same key twice: invalid workflow YAML, and a startup failure that
+    # attaches no check at all to the pull request.
+    duplicate-time-limit)
+      edit_file "$wf" '{ print } !duplicated && /^[ \t]*timeout-minutes:/ { print; duplicated = 1 }' ;;
+    # A limit that is not a limit.
+    time-limit-of-zero)
+      edit_file "$wf" '{ if ($0 ~ /^[ \t]*timeout-minutes:/) { sub(/:[ \t]*.*$/, ": 0") } print }' ;;
     # The reviewer moves in this repository, and the workflow is not touched.
     rename-the-reviewer)
       [ -f "$root/review/review.sh" ] || die "the counter-stimulus 'rename-the-reviewer' needs review/review.sh"
