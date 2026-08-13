@@ -124,9 +124,36 @@ ITSELF satisfies both and the suite still reports "all 4 proven able to fail".
 The real guard is correct — the verifier executed it standalone — but no check
 holds it there.
 
-F4 (phase 3): the timing comment is measurably wrong. Over all 53 runs in both
-repositories: 39 successes, range 23-270s, and 28 of the 39 are BELOW 89s. My
-"89-270s" lower bound is wrong. The 1267s failure is real and is pure execution.
+F4 (phase 3): the timing comment is measurably wrong. The 89s lower bound is
+wrong — most successful reviews are faster than that.
+
+**AND THE VERIFIER'S OWN SECOND HALF WAS REFUTED IN PHASE 7, WITH BETTER
+EVIDENCE.** It reported the 1267s failure as "pure execution, queue 0s". It is
+not. Run `31531318733` in infrastructure:
+
+    run created  20:07:23Z
+    job started  20:25:58Z    queue      1115s
+    job finished 20:28:29Z    execution   151s
+
+1267s is WALL time: 1115s of queue plus 151s of work. The same holds for the
+other long failure (3394s queue + 178s execution).
+
+THE METHOD IS THE POINT. Run-level `startedAt`->`updatedAt` CANNOT separate queue
+from execution. The jobs API can, and only the jobs API gives a true execution
+time. Both measurements that used the coarse method — the verifier's and my own
+— were wrong in the same direction.
+
+SO NO OBSERVED RUN IS A HANG. The worst true execution across 45 recorded jobs is
+958s, and that job was CANCELLED. Zero jobs have ever exceeded 30 minutes of
+execution.
+
+**I told Mateo the 1267s case was "the hang the timeout exists to catch". That
+was wrong.** The pathology is QUEUE, and `timeout-minutes` cannot see queue. The
+limit is a ceiling nothing has approached, not a backstop that has caught
+anything.
+
+A quiet confirmation from the same sweep: 8 of the 53 runs produced NO JOB AT
+ALL. That is the duplicate-key startup-failure era, measured independently.
 
 F5 (phase 3): the README tells the reader to run `gh release list --repo
 gophersys/cictl`, which returns EMPTY. There are no releases at all, and no
