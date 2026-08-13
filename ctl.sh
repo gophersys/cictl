@@ -51,6 +51,7 @@ function cmd_test() {
   log_info "test: go test -race ./..."
   (cd "$PROJECT_ROOT" && GOWORK=off go test -race ./...)
   cmd_test_review
+  cmd_test_workflow
   log_success "test: OK"
 }
 
@@ -64,6 +65,17 @@ function cmd_test_review() {
   log_info "test-review: review/review_test.sh (guards, then mutation proof)"
   (cd "$PROJECT_ROOT" && bash review/review_test.sh)
   log_success "test-review: OK"
+}
+
+# cmd_test_workflow — the same 2 phases for .github/workflows/pr-review.yml, the
+# reusable workflow that every other repository calls. Its assertions read the
+# file, the paths it points into and what actionlint says about it; each one is
+# then re-run against a copy with 1 counter-stimulus applied and must fail.
+function cmd_test_workflow() {
+  require_cmd bash actionlint awk diff find sort
+  log_info "test-workflow: review/workflow_test.sh (the one home, then discrimination)"
+  (cd "$PROJECT_ROOT" && bash review/workflow_test.sh)
+  log_success "test-workflow: OK"
 }
 
 function cmd_fmt() {
@@ -81,7 +93,7 @@ function cmd_vet() {
 }
 
 function cmd_lint() {
-  require_cmd go gofumpt golangci-lint shellcheck
+  require_cmd go gofumpt golangci-lint shellcheck actionlint
   log_info "lint: gofumpt -l ."
   local unformatted
   unformatted="$(cd "$PROJECT_ROOT" && gofumpt -l .)"
@@ -105,6 +117,25 @@ function cmd_lint() {
   log_info "lint: ${sh_count} shell script(s)"
   (cd "$PROJECT_ROOT" && find . -name '*.sh' -not -path './.git/*' -print0 \
      | xargs -0 shellcheck)
+
+  # This repo also ships the reusable pr-review workflow that every other
+  # repository calls, so a defect in it reaches all of them at once. actionlint
+  # is the only linter here that reports a duplicate key: neither yq nor a YAML
+  # library does, both keep the last one silently, and a duplicated
+  # `timeout-minutes` produced startup failures that attached NO check to the
+  # pull request in 3 repositories.
+  log_info "lint: actionlint (.github/workflows)"
+  local wf_count
+  wf_count="$(cd "$PROJECT_ROOT" && find .github/workflows -type f \( -name '*.yml' -o -name '*.yaml' \) | wc -l | tr -d ' ')"
+  if [[ "$wf_count" -eq 0 ]]; then
+    log_error "no workflow files found under .github/workflows; the discovery is broken, not the repo"
+    exit 1
+  fi
+  log_info "lint: ${wf_count} workflow file(s)"
+  # -config-file is named rather than discovered: actionlint finds the config from
+  # the project root and finds the root from .git, which is a FILE in a worktree.
+  (cd "$PROJECT_ROOT" && find .github/workflows -type f \( -name '*.yml' -o -name '*.yaml' \) -print0 \
+     | xargs -0 actionlint -oneline -config-file .github/actionlint.yaml)
 
   log_info "lint: go vet ./..."
   (cd "$PROJECT_ROOT" && GOWORK=off go vet ./...)
@@ -140,15 +171,16 @@ function usage() {
 Usage: ./ctl.sh <command> [args...]
 
 Commands:
-  build        Compile cictl (go build ./...)
-  test         The full suite: go test -race ./... then the review guard suite
-  test-review  Only the review/review.sh guard suite (behaviour + mutation)
-  fmt          Format the source (gofumpt -w .)
-  vet          go vet ./...
-  lint         gofumpt check + go vet + golangci-lint (shared strict config)
-  gate         The full CI-on-CI gate: build + lint + test -race
-  install      Install the cictl binary (GOWORK=off go install ./cmd/cictl)
-  help         Show this message
+  build          Compile cictl (go build ./...)
+  test           The full suite: go test -race ./... then both review suites
+  test-review    Only the review/review.sh guard suite (behaviour + mutation)
+  test-workflow  Only the pr-review workflow suite (behaviour + discrimination)
+  fmt            Format the source (gofumpt -w .)
+  vet            go vet ./...
+  lint           gofumpt check + go vet + golangci-lint + shellcheck + actionlint
+  gate           The full CI-on-CI gate: build + lint + test -race
+  install        Install the cictl binary (GOWORK=off go install ./cmd/cictl)
+  help           Show this message
 EOF
 }
 
@@ -157,16 +189,17 @@ function main() {
   local cmd="${1:-help}"
   shift || true
   case "$cmd" in
-    build)       cmd_build       "$@" ;;
-    test)        cmd_test        "$@" ;;
-    test-review) cmd_test_review "$@" ;;
-    fmt)         cmd_fmt         "$@" ;;
-    vet)         cmd_vet         "$@" ;;
-    lint)        cmd_lint        "$@" ;;
-    gate)        cmd_gate        "$@" ;;
-    install)     cmd_install     "$@" ;;
-    help|"")     usage ;;
-    *)           log_error "unknown command: '$cmd'"; usage; exit 1 ;;
+    build)         cmd_build         "$@" ;;
+    test)          cmd_test          "$@" ;;
+    test-review)   cmd_test_review   "$@" ;;
+    test-workflow) cmd_test_workflow "$@" ;;
+    fmt)           cmd_fmt           "$@" ;;
+    vet)           cmd_vet           "$@" ;;
+    lint)          cmd_lint          "$@" ;;
+    gate)          cmd_gate          "$@" ;;
+    install)       cmd_install       "$@" ;;
+    help|"")       usage ;;
+    *)             log_error "unknown command: '$cmd'"; usage; exit 1 ;;
   esac
 }
 

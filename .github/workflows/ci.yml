@@ -42,5 +42,9 @@ jobs:
           go install mvdan.cc/gofumpt@latest
           curl -sSfL https://raw.githubusercontent.com/golangci/golangci-lint/HEAD/install.sh \
             | sh -s -- -b "$(go env GOPATH)/bin" v2.12.2
+          # Pinned, never @latest: this linter decides whether the reusable
+          # pr-review workflow is valid, and a lint that changes under you is a
+          # gate that changes under you.
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
       - name: ctl.sh gate
         run: bash ./ctl.sh gate
