@@ -12,10 +12,6 @@ permissions:
 
 jobs:
   gate:
-    # A job with no limit inherits the GitHub default of 360 minutes. On a self-
-    # hosted pool of 4 slots that is 6 hours of 1 slot held by a hung job, and
-    # every other repository waits behind it. Sized from the measured runtime.
-    timeout-minutes: 15
     # GitHub-hosted, NOT the self-hosted arc-org pool, because this repo is public.
     # Two reasons, and the first is a hard stop:
     #   1. arc-org lives in the Default runner group with
@@ -26,6 +22,14 @@ jobs:
     # Public repos get unlimited GitHub-hosted minutes, so this costs nothing.
     # See gophersys/infrastructure docs/ci-runners.md.
     runs-on: ubuntu-latest
+    # A job with no limit inherits the GitHub default of 360 minutes.
+    #
+    # DECLARED ONCE. This job carried `timeout-minutes` twice, which makes the
+    # file invalid workflow YAML. GitHub answers with a startup failure that
+    # attaches NO check to the pull request, so this gate was dead and looked
+    # absent. Proven by this repository's own history across that one commit:
+    # `push success` before it, `push failure` on the branch that introduced it,
+    # and every run since.
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
