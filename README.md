@@ -138,8 +138,7 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
-    # <tag> is a placeholder. No tag carries this workflow yet — read on.
-    uses: gophersys/cictl/.github/workflows/pr-review.yml@<tag>
+    uses: gophersys/cictl/.github/workflows/pr-review.yml@v0.4.0
 ```
 
 The tag on the `uses:` line is the **only** pin. It resolves to a commit, the
@@ -147,17 +146,27 @@ review job fetches its own source at that same commit, and it asserts that the
 checkout it got is that commit. So the workflow that runs and the reviewer that
 runs are one commit, and there is no second version string to keep in step.
 
-**No tag carries this workflow yet, so there is no caller to add anywhere yet.**
-`gophersys/cictl` has 4 tags — v0.1.0, v0.2.0, v0.2.1 and v0.3.0 — and
-`git cat-file -e <tag>:.github/workflows/pr-review.yml` fails on every one of
-them. It has no releases at all, so `gh release list --repo gophersys/cictl`
-prints nothing. A caller that names one of those tags fails at run time with
-`workflow was not found`, and no local check sees it first: actionlint accepts
-any ref, because it does not resolve one.
+**`v0.4.0` is the first tag that carries this workflow, and it is the earliest one
+a caller may name.** Every tag before it fails:
 
-The first usable tag has to be cut from the branch that adds this file, after it
-merges. Until then, a repository keeps the reviewer it has. Afterwards, check
-what exists with `git ls-remote --tags https://github.com/gophersys/cictl`.
+```
+git cat-file -e v0.4.0:.github/workflows/pr-review.yml    rc=0   carries it
+git cat-file -e v0.3.0:.github/workflows/pr-review.yml    rc=1   absent
+... and the same for v0.2.1, v0.2.0 and v0.1.0
+```
+
+A caller that names an earlier tag fails at run time with
+`workflow was not found`, and **no local check sees it first**: actionlint accepts
+any ref, because it does not resolve one. So verify the tag yourself before you
+pin it:
+
+```
+git ls-remote --tags https://github.com/gophersys/cictl
+```
+
+A repository may sit on an older tag on purpose. The pin is per repository and
+nothing forces them to move together — that is the point of putting the version
+on the `uses:` line rather than in a second version string inside the job.
 
 A repository may then sit on an older tag deliberately. Nothing here updates a
 caller, and a caller that is 3 tags behind keeps reviewing with the reviewer it
