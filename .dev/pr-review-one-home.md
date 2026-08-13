@@ -1,11 +1,11 @@
 # pr-review-one-home
 
-phase:    red
+phase:    fix — the verifier returned 6 findings
 repo:     gophersys/cictl
 branch:   feat/pr-review-one-home
 worktree: ~/code/.worktrees/cictl-review
 pr:       -
-attempt:  0/2
+attempt:  1/2
 
 ## Goal
 
@@ -77,8 +77,70 @@ Nothing blocks phase 2.
 - `arc-review` capacity: 2 slots, minRunners 0, and 2 slow reviews can hold the
   pool. Measure after, unless a queue appears.
 
+### Phase 2 — RED, and the tool gate fired first
+
+`bash review/workflow_test.sh` -> rc=127, `missing required tool(s): actionlint`.
+No test ran and the suite did not pass quietly. actionlint pinned at v1.7.12,
+confirmed newest stable from the releases API, not assumed.
+
+Then with the tool on PATH, 3 of 4 tests red because the reusable workflow did
+not exist. Test 4 proven able to fail by a planted duplicate key:
+`ci.yml:34:5: key "timeout-minutes" is duplicated in "gate" job [syntax-check]`.
+On that same file `yq '.jobs.gate.timeout-minutes'` returned 15, rc=0 — it keeps
+the last key silently, which is why a real workflow linter is not optional.
+
+**The test author refuted the brief twice.** actionlint v1.7.12 does NOT know
+`github.job_workflow_sha` (the property is real; actionlint's type table is
+incomplete), and `runs-on: arc-review` is an unknown label to it. So
+`.github/actionlint.yaml` is a REQUIRED artefact, not a nicety — without it
+phase 1 is red for reasons unrelated to this feature.
+
+### Phase 3 — GREEN
+
+`bash review/workflow_test.sh` rc=0, `all 4 assertion(s) hold, and all 4 are
+proven able to fail` across 6 counter-stimuli. `ctl.sh lint` rc=0, `ctl.sh test`
+rc=0 and visibly runs the new suite, `ctl.sh gate` rc=0.
+
+Missing-tool path proven: with `~/go/bin` off PATH, `ctl.sh lint` -> rc=127
+naming actionlint. No skip.
+
+The pin mechanism proven against the real public repository, not assumed:
+asked `f373bd8...`, fetch+checkout rc=0, got `f373bd8...`, match rc=0.
+
+### Phase 4 — the verifier REFUTED 6 things
+
+F1 (mine, high): this state file was stale — it still read `phase: red` and
+`## Next: phase 2` after phases 2 and 3 had shipped. `/dev resume` would have
+dispatched a test author over a finished implementation. FIXED HERE. Neither
+subagent could fix it: both disclaim ownership of this file, correctly.
+
+F2 (phase 2): deleting `timeout-minutes` entirely leaves EVERY check green.
+actionlint catches a duplicate key, never an absent one. 8 lines of comment argue
+for the limit and nothing asserts it is there.
+
+F3 (phase 2): the pin guard is tested by SHAPE, not behaviour. The test requires
+a line ending `# guard:pin` containing `exit [1-9]`. A guard comparing a value to
+ITSELF satisfies both and the suite still reports "all 4 proven able to fail".
+The real guard is correct — the verifier executed it standalone — but no check
+holds it there.
+
+F4 (phase 3): the timing comment is measurably wrong. Over all 53 runs in both
+repositories: 39 successes, range 23-270s, and 28 of the 39 are BELOW 89s. My
+"89-270s" lower bound is wrong. The 1267s failure is real and is pure execution.
+
+F5 (phase 3): the README tells the reader to run `gh release list --repo
+gophersys/cictl`, which returns EMPTY. There are no releases at all, and no
+existing tag carries this workflow.
+
+F6 (phase 3): "every other repository waits behind it" survived the removal of
+"of 4 slots". With maxRunners 2, one hung job leaves one slot.
+
+**And a measurement that matters beyond this feature:** the verifier found a
+4346-second QUEUE on `arc-review` (a 4418s wall run was 4346s queue + 72s exec).
+`timeout-minutes` does not count queue time, so the pool genuinely saturates and
+no timeout would ever reveal it.
+
 ## Next
 
-Phase 2 — the 4 red tests the planner named, each proven to fail for the reason
-the feature is about. `actionlint` is NOT installed on this machine; it is a new
-gate tool, and an absent tool is a FAILURE that names it, never a skip.
+Phase 7 fix, in order, because F2 and F3 add tests the workflow must then satisfy:
+test author for F2 and F3, THEN implementer for F4, F5 and F6.
