@@ -141,10 +141,39 @@ jobs:
     uses: gophersys/cictl/.github/workflows/pr-review.yml@v0.4.0
 ```
 
-The tag on the `uses:` line is the **only** pin. It resolves to a commit, the
-review job fetches its own source at that same commit, and it asserts that the
-checkout it got is that commit. So the workflow that runs and the reviewer that
-runs are one commit, and there is no second version string to keep in step.
+> **DO NOT ADOPT THIS YET. The pin does not resolve, and it is measured.**
+>
+> The intent below is correct and the mechanism is not. On the first real run
+> (`gophersys/infrastructure#171`) `${{ github.job_workflow_sha }}` was **empty**,
+> so the job could not learn its own commit. A probe then read the whole
+> candidate set inside a called workflow:
+>
+> ```
+> job_workflow_sha = []                          EMPTY
+> job_workflow_ref = []                          EMPTY
+> workflow_sha     = [86d6f8f...]                the CALLER's commit
+> workflow_ref     = [<caller>/.github/workflows/pr-review.yml@refs/pull/171/merge]
+> sha              = [86d6f8f...]                the CALLER's commit
+> repository       = [<caller>]                  the CALLER's repo
+> ```
+>
+> **Inside a called workflow there is no context variable that names the reusable
+> workflow's own commit.** Every one that is populated names the caller.
+>
+> The `# guard:pin` line did its job: an empty value made `git fetch origin ""`
+> take the default branch, and the guard failed the run loudly instead of
+> reviewing against a commit nobody chose.
+>
+> The replacement mechanism is an open decision. Until it lands, a repository
+> keeps the reviewer it has.
+
+The tag on the `uses:` line is meant to be the **only** pin: it resolves to a
+commit, the review job fetches its own source at that same commit, and it asserts
+that the checkout it got is that commit — so the workflow that runs and the
+reviewer that runs are one commit, with no second version string to keep in step.
+
+That property is the reason for this design, and it is worth keeping. What the
+measurement above rules out is only the WAY the job learns the commit.
 
 **`v0.4.0` is the first tag that carries this workflow, and it is the earliest one
 a caller may name.** Every tag before it fails:
