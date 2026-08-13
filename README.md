@@ -118,10 +118,11 @@ key on the machine cannot rescue a test and cannot break one.
 
 ## The review workflow has one home
 
-`.github/workflows/pr-review.yml` in **this** repository is the review job for
-every `gophersys` repository. It was a 106-line file copied byte for byte into
-each of them, so a fix to the reviewer landed in some and not in others. It is
-now a reusable workflow, and a repository calls it:
+`.github/workflows/pr-review.yml` in **this** repository is the one review job
+that a `gophersys` repository calls instead of holding a copy of. It was a
+106-line file copied byte for byte into 2 of them, so a fix to the reviewer
+landed in some and not in others. It is now a reusable workflow, and a
+repository calls it:
 
 ```yaml
 # .github/workflows/pr-review.yml — copy this, and nothing else.
@@ -137,18 +138,30 @@ jobs:
     permissions:
       contents: read
       pull-requests: write
+    # <tag> is a placeholder. No tag carries this workflow yet — read on.
     uses: gophersys/cictl/.github/workflows/pr-review.yml@<tag>
 ```
 
 The tag on the `uses:` line is the **only** pin. It resolves to a commit, the
 review job fetches its own source at that same commit, and it asserts that the
 checkout it got is that commit. So the workflow that runs and the reviewer that
-runs are one commit, and there is no second version string to keep in step. Pick
-a released tag: `gh release list --repo gophersys/cictl`.
+runs are one commit, and there is no second version string to keep in step.
 
-A repository may sit on an older tag deliberately. Nothing here updates a caller,
-and a caller that is 3 tags behind keeps reviewing with the reviewer it names.
-Raise the tag when you want the newer reviewer.
+**No tag carries this workflow yet, so there is no caller to add anywhere yet.**
+`gophersys/cictl` has 4 tags — v0.1.0, v0.2.0, v0.2.1 and v0.3.0 — and
+`git cat-file -e <tag>:.github/workflows/pr-review.yml` fails on every one of
+them. It has no releases at all, so `gh release list --repo gophersys/cictl`
+prints nothing. A caller that names one of those tags fails at run time with
+`workflow was not found`, and no local check sees it first: actionlint accepts
+any ref, because it does not resolve one.
+
+The first usable tag has to be cut from the branch that adds this file, after it
+merges. Until then, a repository keeps the reviewer it has. Afterwards, check
+what exists with `git ls-remote --tags https://github.com/gophersys/cictl`.
+
+A repository may then sit on an older tag deliberately. Nothing here updates a
+caller, and a caller that is 3 tags behind keeps reviewing with the reviewer it
+names. Raise the tag when you want the newer one.
 
 `arc-review` is a self-hosted pool in the Default runner group, which sets
 `allows_public_repositories: false`. A **public** repository that calls this
