@@ -124,6 +124,10 @@ that a `gophersys` repository calls instead of holding a copy of. It was a
 landed in some and not in others. It is now a reusable workflow, and a
 repository calls it:
 
+> **DO NOT ADOPT THIS YET. The pin does not resolve, and it is measured.**
+> The stub below is correct in intent and its pin mechanism does not work. Read
+> the note under it before you copy anything.
+
 ```yaml
 # .github/workflows/pr-review.yml — copy this, and nothing else.
 name: pr-review
