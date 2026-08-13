@@ -1,0 +1,112 @@
+# The pull request review agent, and the ONE home of it.
+#
+# This is NOT a build gate. It is a step in the development process: an agent
+# reads the change with no memory of writing it, and comments. The author fixes
+# the findings and pushes again. The loop is bounded at 2 rounds.
+#
+# Every gophersys repository calls THIS file. It used to be a 106-line copy in
+# each of them, byte for byte, so a fix to the reviewer landed in some and not
+# in others. A caller holds ~14 lines and no logic; the stub is in README.md.
+#
+# It runs on `arc-review`, a pool with no dind sidecar and its own Claude
+# credential. The credential is an environment variable on that pool, so it is
+# readable by every job that runs there — which is why the pool runs this
+# workflow and nothing else. No credential is passed in from a caller: a
+# workflow_call secret would give the same token a second home in every
+# repository that calls this file.
+name: pr-review
+
+on:
+  workflow_call:
+
+# Only 1 review per pull request at a time. A second push while a review is
+# running cancels it: reviewing a diff that has already changed wastes the budget.
+concurrency:
+  group: pr-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+# There is no `permissions:` block here, deliberately. A called workflow cannot
+# raise what the caller granted, so the grant that decides whether the review can
+# be posted is the caller's — it is 3 lines of the stub in README.md. A caller
+# that omits it gets a 403 from `gh pr comment`, and review.sh fails the job on
+# it rather than passing quietly.
+
+jobs:
+  review:
+    # A job with no limit inherits the GitHub default of 360 minutes. On a self-
+    # hosted pool that is 6 hours of 1 slot held by a hung job, and every other
+    # repository waits behind it.
+    #
+    # DECLARED ONCE. This job carried `timeout-minutes` twice, which makes the
+    # file invalid workflow YAML. GitHub answers with a startup failure that
+    # attaches NO check to the pull request, so the reviewer read as absent
+    # rather than broken, and no pull request here was reviewed for days.
+    #
+    # 30 now has runs behind it: successful reviews take 89-270s, and the one run
+    # that reached 1267s FAILED. The tail is a hang, which is what a limit is for.
+    runs-on: arc-review
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The reviewer reads history to judge a change against what came
+          # before, so a shallow clone is not enough.
+          fetch-depth: 0
+
+      - name: Review
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          REVIEW_BUDGET_USD: "25"
+          # The commit of THIS workflow file, resolved at run time from the ref on
+          # the caller's `uses:` line. See the note in the step below.
+          REVIEWER_SHA: ${{ github.job_workflow_sha }}
+          REVIEW_STREAM_FILE: ${{ runner.temp }}/review-stream.jsonl
+        run: |
+          set -euo pipefail
+          # cictl is on PATH in the runner image, but the reviewer's instructions
+          # ship with its source. Fetch the pinned copy rather than vendoring a
+          # second one that would drift.
+          #
+          # THE CALLER'S `uses:` REF IS THE ONLY PIN. It resolves to the commit of
+          # this workflow, and that same commit is what is fetched here, so the
+          # reviewer source and the workflow that runs it are the same commit by
+          # construction. The version string this replaces was a second pin, and
+          # it pinned a NAME: a tag can be moved after the fact, and a clone that
+          # could not find one fell back to the default branch — cictl moved 23
+          # commits in one evening and no review from that period can be
+          # reproduced.
+          #
+          # To take a new reviewer, move the ref on the caller's `uses:` line. A
+          # repository may sit on an older ref deliberately.
+          git init -q /tmp/cictl
+          git -C /tmp/cictl remote add origin https://github.com/gophersys/cictl
+          git -C /tmp/cictl fetch -q --depth 1 origin "$REVIEWER_SHA"
+          git -C /tmp/cictl checkout -q FETCH_HEAD
+          # Asking for a commit is not the same as having it. Prove that what
+          # arrived IS the commit that was asked for, because a checkout at any
+          # other commit would be reviewed anyway and nobody would know which
+          # reviewer ran.
+          got="$(git -C /tmp/cictl rev-parse HEAD)"
+          [ "$got" = "$REVIEWER_SHA" ] || { echo "::error::reviewer checkout is '$got', expected '$REVIEWER_SHA'"; exit 1; } # guard:pin
+          echo "reviewer: cictl $got"
+          bash /tmp/cictl/review/review.sh "${{ github.event.pull_request.number }}"
+
+      # The full event stream: every tool call, every file read, the cost and the
+      # turn count. `if: always()` is the point of it — a review that failed is
+      # exactly the one whose stream you need, and without this the only way to
+      # diagnose it is to pay for another run.
+      - name: Keep the run
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: review-stream-${{ github.event.pull_request.number }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/review-stream.jsonl
+          # `warn` is correct here, and it cannot hide a failure. review.sh
+          # refuses an empty or missing stream itself — the empty-stream and
+          # no-result-event guards, both proven able to fail in its test suite —
+          # so the Review step above is already red in every case this step could
+          # be quiet about. Making this step fail as well would add a check that
+          # can only fire when another check has already fired.
+          if-no-files-found: warn
+          retention-days: 14

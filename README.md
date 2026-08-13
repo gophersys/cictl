@@ -116,12 +116,52 @@ small set of coreutils that `review.sh` needs. The real `claude` and the real
 `gh` are unreachable. The runs also use `env -i`, thus a real token or a real API
 key on the machine cannot rescue a test and cannot break one.
 
+## The review workflow has one home
+
+`.github/workflows/pr-review.yml` in **this** repository is the review job for
+every `gophersys` repository. It was a 106-line file copied byte for byte into
+each of them, so a fix to the reviewer landed in some and not in others. It is
+now a reusable workflow, and a repository calls it:
+
+```yaml
+# .github/workflows/pr-review.yml — copy this, and nothing else.
+name: pr-review
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  review:
+    # The token the review is posted with. A called workflow cannot raise what
+    # the caller granted, so this grant has to be here.
+    permissions:
+      contents: read
+      pull-requests: write
+    uses: gophersys/cictl/.github/workflows/pr-review.yml@<tag>
+```
+
+The tag on the `uses:` line is the **only** pin. It resolves to a commit, the
+review job fetches its own source at that same commit, and it asserts that the
+checkout it got is that commit. So the workflow that runs and the reviewer that
+runs are one commit, and there is no second version string to keep in step. Pick
+a released tag: `gh release list --repo gophersys/cictl`.
+
+A repository may sit on an older tag deliberately. Nothing here updates a caller,
+and a caller that is 3 tags behind keeps reviewing with the reviewer it names.
+Raise the tag when you want the newer reviewer.
+
+`arc-review` is a self-hosted pool in the Default runner group, which sets
+`allows_public_repositories: false`. A **public** repository that calls this
+workflow queues forever with no error and no message, so a caller belongs only in
+a private one.
+
 ## Development
 
 ```sh
-bash ./ctl.sh test         # go test -race ./... and the review guard suite
-bash ./ctl.sh test-review  # only the review guard suite
-bash ./ctl.sh gate         # build + lint + test
+bash ./ctl.sh test           # go test -race ./... and both review suites
+bash ./ctl.sh test-review    # only the review/review.sh guard suite
+bash ./ctl.sh test-workflow  # only the pr-review workflow suite
+bash ./ctl.sh gate           # build + lint + test
 ```
 
 Each verb runs with `GOWORK=off`. The module must build on its own, because CI

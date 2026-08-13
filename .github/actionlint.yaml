@@ -1,0 +1,23 @@
+# actionlint configuration. Both entries exist because actionlint's own tables
+# are behind GitHub, and each one says what would let it be deleted. Nothing
+# broader belongs here: an ignore that matches more than the message it was
+# written for is how a linter stops finding anything.
+
+# `arc-review` is a self-hosted Actions Runner Controller pool in the cluster, so
+# it is in no table of GitHub-hosted labels. actionlint's own diagnostic asks for
+# exactly this list. Delete the entry when the pool is gone.
+self-hosted-runner:
+  labels:
+    - arc-review
+
+paths:
+  # `github.job_workflow_sha` is real — it is how a called workflow learns its own
+  # commit, and it is the only pin the review job has. actionlint v1.7.12 does not
+  # carry it in its `github` context type, so it reports the property as
+  # undefined. The ignore is the exact message and nothing else, so any OTHER
+  # expression defect in this file is still an error. Delete it when actionlint
+  # ships the property; `actionlint -version` and a run with this file removed is
+  # the whole test.
+  .github/workflows/pr-review.yml:
+    ignore:
+      - 'property "job_workflow_sha" is not defined'
