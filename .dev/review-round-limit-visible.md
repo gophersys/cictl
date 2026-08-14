@@ -1,11 +1,14 @@
 # review-round-limit-visible
 
-phase:    verify
+phase:    pr
 repo:     gophersys/cictl
 branch:   fix/review-round-limit-visible
 worktree: ~/code/.worktrees/cictl-review-limit-visible
 pr:       -
 attempt:  0/2
+
+## REMINDER TO SELF (missed last feature): delete this .dev file in the FINAL commit before merge,
+## and run `git cat-file -e origin/main:.dev/review-round-limit-visible.md` to PROVE it is gone.
 
 ## Goal
 The pr-review agent goes GREEN without reviewing when the round limit is hit, and nothing on the
@@ -88,6 +91,15 @@ review.sh change touches are shellcheck (clean) + the review test suite (test-re
 phases). Go build/test/golangci and actionlint (workflows) are unaffected — confirmed authoritatively
 by the cictl PR ci.yml on the real runner (which has actionlint; absent locally + in base-runner).
 No emulated local full-gate — it would only re-confirm Go components this change cannot alter.
+
+## Verifier — PASS (adversarial, 2026-08-14)
+Survives refutation. Landmine defused BY EXECUTION: next-push simulation (2 real review comments +
+this skip notice) through review.sh's exact rounds_done jq query returns 2, not 3 — the skip notice
+is never counted. Both new guards load-bearing (each mutation reddens its test). shellcheck rc=0
+(the added SC2016 disable is load-bearing + carries a reason). exit 0 preserved, claude not called
+(no review spend). State file honest. Only unrun check: full `ctl.sh gate` (actionlint absent) —
+recorded as UNRUN not skipped; shell-only change, so its affected gates (shellcheck + test-review)
+pass, and PR ci.yml is authoritative.
 
 ## Blocked
 Nothing. cictl is quiet (0 open PRs). Non-Mateo.
