@@ -1,10 +1,10 @@
 # review-round-limit-visible
 
-phase:    pr
+phase:    wait
 repo:     gophersys/cictl
 branch:   fix/review-round-limit-visible
 worktree: ~/code/.worktrees/cictl-review-limit-visible
-pr:       -
+pr:       19
 attempt:  0/2
 
 ## REMINDER TO SELF (missed last feature): delete this .dev file in the FINAL commit before merge,
