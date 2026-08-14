@@ -516,7 +516,6 @@ t_a_third_run_refuses_before_it_costs_anything() {
   assert_stdout_has "limit is reached"
   # The point of the ceiling is spend. The agent must never be reached.
   assert_not_called claude
-  assert_no_comment
 }
 
 t_the_round_ceiling_is_configurable() {
@@ -535,6 +534,46 @@ t_the_posted_review_carries_the_marker() {
   assert_rc_zero
   grep -qF -- '<!-- gophersys-review-agent -->' "$SB/posted_body" \
     || fail "the posted review carries no marker, so the next round cannot count it"
+}
+
+# When the round ceiling is reached the push is NOT reviewed — that is the design
+# working. But a green pr-review check with nothing on the pull request reads as a
+# review that happened. The skip must leave a visible trace on the pull request: a
+# comment stating the push was not reviewed, that the limit was hit, and the remedy.
+t_a_round_limit_skip_posts_a_visible_notice() {
+  local sb; sb="$(new_sandbox)"
+  rounds_with 2 > "$sb/fx/comments"
+  run_review "$sb" ${CREDS[@]+"${CREDS[@]}"} -- 1
+  # Exit 0: the ceiling stays green, as the author chose.
+  assert_rc_zero
+  # Spend is the whole point of the ceiling: the agent is never reached.
+  assert_not_called claude
+  # The skip is now visible on the pull request, not only in the runner log.
+  assert_comment_posted
+  grep -qF -- 'not reviewed' "$SB/posted_body" \
+    || fail "the skip notice does not say the push was not reviewed: $(cat "$SB/posted_body")"
+  grep -qF -- 'limit' "$SB/posted_body" \
+    || fail "the skip notice does not say the round limit was reached: $(cat "$SB/posted_body")"
+  grep -qF -- 'REVIEW_MAX_ROUNDS' "$SB/posted_body" \
+    || fail "the skip notice does not state the remedy (raise REVIEW_MAX_ROUNDS): $(cat "$SB/posted_body")"
+}
+
+# The skip notice must be visible to a human but MUST NOT be counted as a review
+# round. Rounds are counted by MARKER comments, so the notice carries a DISTINCT
+# skip marker and never the review marker: if it carried the review marker the next
+# push would count this skip as a round and the ceiling would cascade.
+t_the_skip_notice_is_not_counted_as_a_round() {
+  local sb; sb="$(new_sandbox)"
+  rounds_with 2 > "$sb/fx/comments"
+  run_review "$sb" ${CREDS[@]+"${CREDS[@]}"} -- 1
+  assert_rc_zero
+  assert_comment_posted
+  grep -qF -- '<!-- gophersys-review-agent-skip -->' "$SB/posted_body" \
+    || fail "the skip notice carries no skip marker, so it cannot be told apart from a review"
+  # `agent-skip -->` never contains the contiguous `agent -->`, so this is the
+  # property that keeps the notice uncounted by the marker query.
+  ! grep -qF -- '<!-- gophersys-review-agent -->' "$SB/posted_body" \
+    || fail "the skip notice carries the review marker, so the next push counts it as a round"
 }
 
 TESTS=(
@@ -566,6 +605,8 @@ TESTS=(
   t_a_third_run_refuses_before_it_costs_anything
   t_the_round_ceiling_is_configurable
   t_the_posted_review_carries_the_marker
+  t_a_round_limit_skip_posts_a_visible_notice
+  t_the_skip_notice_is_not_counted_as_a_round
 )
 
 # MARKER_COVERAGE maps every marker in review.sh to the test that proves it.
@@ -591,6 +632,8 @@ guard:verdict               t_an_unreadable_verdict_is_posted_and_then_fails
 guard:verdict-unparsed      t_an_unreadable_verdict_is_posted_and_then_fails
 guard:denials               t_a_denied_read_is_posted_and_then_fails_the_job
 guard:round-limit           t_a_third_run_refuses_before_it_costs_anything
+guard:skip-notice           t_a_round_limit_skip_posts_a_visible_notice
+guard:skip-uncounted        t_the_skip_notice_is_not_counted_as_a_round
 verdict:request-changes     t_a_verdict_may_carry_its_reason
 capture:summary             t_the_run_summary_and_the_stream_are_kept
 capture:allowed-tools       t_the_agent_is_given_a_read_only_tool_set
@@ -648,6 +691,10 @@ mutation_for() {
     t_a_second_run_is_round_2_and_sees_the_first) printf 's|^round=.*|round=1|' ;;
     # Raise the ceiling out of the way, so a third round proceeds and spends.
     t_a_third_run_refuses_before_it_costs_anything) printf 's|^MAX_ROUNDS=.*|MAX_ROUNDS=99|' ;;
+    # Delete the post line, so the round-limit skip leaves nothing on the pull request.
+    t_a_round_limit_skip_posts_a_visible_notice) printf '/# guard:skip-notice$/d' ;;
+    # Swap the skip marker to the review marker, so the notice would be counted as a round.
+    t_the_skip_notice_is_not_counted_as_a_round) printf 's|^SKIP_MARKER=.*|SKIP_MARKER="<!-- gophersys-review-agent -->"|' ;;
     t_the_round_ceiling_is_configurable)         printf 's|^MAX_ROUNDS=.*|MAX_ROUNDS=2|' ;;
     t_the_posted_review_carries_the_marker)      printf '/# post:marker$/d' ;;
     t_usage_requires_pr_number)                  printf '/# guard:usage$/d' ;;

@@ -32,6 +32,12 @@ MAX_ROUNDS="${REVIEW_MAX_ROUNDS:-2}" # guard:round-limit
 # The footer that marks a comment as this agent's. It is how a round is counted,
 # so it must be posted with every review and must never be edited by hand.
 MARKER="<!-- gophersys-review-agent -->"
+# The footer for a skip notice. It is DISTINCT from MARKER on purpose: the round
+# counter selects comments that contain MARKER, and `agent-skip -->` never holds
+# the contiguous `agent -->`, so a skip is visible to a human but never counted
+# as a review. If it carried MARKER, the next push would count this skip and the
+# ceiling would cascade.
+SKIP_MARKER="<!-- gophersys-review-agent-skip -->" # guard:skip-uncounted
 # The full event stream. The workflow keeps it as an artifact, so it must outlive
 # the run and therefore is NOT a temp file.
 STREAM_FILE="${REVIEW_STREAM_FILE:-review-stream.jsonl}"
@@ -101,6 +107,19 @@ round=$(( rounds_done + 1 ))
 # is exactly what teaches people to ignore red.
 if [ "$round" -gt "$MAX_ROUNDS" ]; then
   log "${rounds_done} review(s) already posted on #${PR}; the ${MAX_ROUNDS}-round limit is reached, so this push is not reviewed"
+  # A green pr-review check with nothing on the pull request reads as a review
+  # that happened. Leave a visible trace instead of only a runner-log line: state
+  # that the push was not reviewed, why, and the remedy. SKIP_MARKER, not MARKER,
+  # keeps this out of the round count.
+  {
+    printf 'This push was **not reviewed**.\n\n'
+    printf 'The pull request has reached the %s-round review limit, so the review\n' "$MAX_ROUNDS"
+    printf 'agent did not run on this push.\n\n'
+    # shellcheck disable=SC2016  # backticks are markdown for the PR, not a subshell
+    printf 'Review this push manually, or raise `REVIEW_MAX_ROUNDS` to allow another round.\n'
+    printf '\n%s\n' "$SKIP_MARKER"
+  } > "$out_file"
+  gh pr comment "$PR" --body-file "$out_file" || die "could not post the skip notice" # guard:skip-notice
   exit 0
 fi
 
