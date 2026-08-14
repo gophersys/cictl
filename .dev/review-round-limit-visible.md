@@ -1,6 +1,6 @@
 # review-round-limit-visible
 
-phase:    red
+phase:    green
 repo:     gophersys/cictl
 branch:   fix/review-round-limit-visible
 worktree: ~/code/.worktrees/cictl-review-limit-visible
