@@ -138,3 +138,99 @@ func TestProjects_EmptyDiff(t *testing.T) {
 		t.Fatalf("HEAD...HEAD diff should be empty; got %v", got)
 	}
 }
+
+// gitRepoRootProject builds a repo whose ROOT is itself a project (ctl.sh +
+// project.json at the top level) — the exact shape the CLI hits with `-C .`,
+// where the current directory is the project. A base commit is made; the caller
+// mutates and commits to create a diff.
+func gitRepoRootProject(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	git := func(args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", args...) //nolint:gosec // fixed git argv in a test fixture.
+		cmd.Dir = dir
+		cmd.Env = append(
+			os.Environ(),
+			"GIT_AUTHOR_NAME=t", "GIT_AUTHOR_EMAIL=t@e",
+			"GIT_COMMITTER_NAME=t", "GIT_COMMITTER_EMAIL=t@e",
+		)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	git("init", "-q")
+	git("checkout", "-q", "-b", "main")
+	writeFile(t, dir, "ctl.sh", "#!/usr/bin/env bash\n")
+	writeFile(t, dir, "project.json", "{}\n")
+	writeFile(t, dir, "review/review.sh", "#!/usr/bin/env bash\n")
+	git("add", "-A")
+	git("commit", "-q", "-m", "base")
+	return dir
+}
+
+func equalStrings(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// TestProjects_RelativeRepoDirMatchesAbsolute pins the core invariant: a RELATIVE
+// repoDir (the CLI default `-C .`, evaluated with the repo as the process CWD)
+// must yield the SAME non-empty affected set as the absolute repoDir. The bug:
+// nearestProjectRoot builds `dir` relative while repoAbs is absolute, so Rel/within
+// error and every changed file is dropped — the relative call returns a false-empty
+// set (rc=0, "no affected projects"). This test cannot be t.Parallel: it t.Chdir's.
+func TestProjects_RelativeRepoDirMatchesAbsolute(t *testing.T) {
+	cases := []struct {
+		name    string
+		build   func(t *testing.T) string
+		changed string
+		want    []string
+	}{
+		{
+			name:    "nested project",
+			build:   gitRepo,
+			changed: "libs/go/alpha/code.go",
+			want:    []string{"libs/go/alpha"},
+		},
+		{
+			name:    "root-level project",
+			build:   gitRepoRootProject,
+			changed: "review/review.sh",
+			want:    []string{"."},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := tc.build(t)
+			commitChange(t, dir, tc.changed, "// touched\n")
+
+			absGot, err := affected.Projects(dir, "HEAD~1")
+			if err != nil {
+				t.Fatalf("Projects(abs): %v", err)
+			}
+			if !equalStrings(absGot, tc.want) {
+				t.Fatalf("absolute repoDir: got %v, want %v", absGot, tc.want)
+			}
+
+			t.Chdir(dir)
+			relGot, err := affected.Projects(".", "HEAD~1")
+			if err != nil {
+				t.Fatalf("Projects(rel): %v", err)
+			}
+			if len(relGot) == 0 {
+				t.Fatalf("relative repoDir %q returned an empty affected set; absolute repoDir returned %v (false-empty: the changed project was dropped)", ".", absGot)
+			}
+			if !equalStrings(relGot, absGot) {
+				t.Fatalf("relative repoDir %q = %v, absolute repoDir = %v; want equal", ".", relGot, absGot)
+			}
+		})
+	}
+}
