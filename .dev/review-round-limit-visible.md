@@ -1,6 +1,6 @@
 # review-round-limit-visible
 
-phase:    plan
+phase:    red
 repo:     gophersys/cictl
 branch:   fix/review-round-limit-visible
 worktree: ~/code/.worktrees/cictl-review-limit-visible
@@ -14,8 +14,39 @@ not. This makes the skip VISIBLE on the PR (an honest green), without turning th
 red (the author's deliberate, correct choice). When done, a round-limit skip leaves a comment on
 the PR stating the push was not reviewed and why.
 
-## Plan
-(dev-planner to produce, then approved here)
+## Plan — APPROVED (dev-planner, orchestrator-approved 2026-08-14)
+EXACT STRINGS both agents must use verbatim (coordination-critical):
+- `SKIP_MARKER="<!-- gophersys-review-agent-skip -->"` — distinct from the review
+  `MARKER="<!-- gophersys-review-agent -->"`. The counter (review.sh:93-97) selects comments whose
+  body `contains($MARKER)`; `agent-skip -->` never contains the contiguous `agent -->`, so the skip
+  notice is UNCOUNTED. LANDMINE: the human-facing skip text must NEVER quote the literal MARKER string.
+- Two guard lines (review.sh guard doctrine — each ends `# guard:<name>`, and review_test.sh mutates
+  each by deleting/altering the line and asserts the matching test fails): `# guard:skip-notice`
+  (the `gh pr comment … --body-file` post line) and `# guard:skip-uncounted` (the `SKIP_MARKER=` line).
+
+FIX (review.sh, dev-implementer): define `SKIP_MARKER` near MARKER (L34); in the round-limit branch
+(L102-105), BEFORE `exit 0`, write a skip notice (not reviewed; limit N reached; remedy = review
+manually or raise REVIEW_MAX_ROUNDS) carrying SKIP_MARKER, and post it via `gh pr comment "$PR"
+--body-file "$out_file"`. Keep exit 0. shellcheck-clean (quote every expansion).
+
+TESTS (review_test.sh, dev-test-author): 2 new + relax 1.
+1. t_a_round_limit_skip_posts_a_visible_notice — rounds_with 2 → exit 0, claude NOT called, a comment
+   IS posted stating not-reviewed + limit + remedy. RED now (current code posts nothing). Mutation:
+   delete `# guard:skip-notice` → no comment → fails.
+2. t_the_skip_notice_is_not_counted_as_a_round — posted body contains SKIP_MARKER and does NOT contain
+   the review MARKER. Mutation: swap SKIP_MARKER to the review marker (`# guard:skip-uncounted`) →
+   body contains MARKER → fails. RED now: assert_comment_posted fails first (right reason).
+3. RELAX t_a_third_run_refuses_before_it_costs_anything (L509-520): remove `assert_no_comment` (L519)
+   — it encodes the OLD silent behaviour. Keep rc 0 + "limit is reached" + assert_not_called claude.
+   Its own mutation MAX_ROUNDS=99 still reddens it, so proof stays intact.
+
+Idempotency: ONE notice per skipped push, no dedup (pr-review.yml runs once/push; concurrency cancels
+in-flight; each un-reviewed push is a distinct honest trace). Out of scope: MAX_ROUNDS, the counting
+query, exit-0 semantics, pr-review.yml, ci.yml.
+
+GATE NOTE: `bash ./ctl.sh gate` needs actionlint v1.7.12 — MISSING on this host (127, FAIL-NOT-SKIP).
+Inner loop `bash ./ctl.sh test-review` runs with present tools. Full gate at phase 4: install
+actionlint (brew) or run in base-runner; the cictl PR ci.yml is the authoritative full gate.
 
 ## Proven
 - CONFIRMED present (2026-08-14) at `review/review.sh:102-105`:
