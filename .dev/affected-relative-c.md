@@ -1,6 +1,6 @@
 # affected-relative-c
 
-phase:    red
+phase:    green
 repo:     gophersys/cictl
 branch:   fix/affected-relative-c
 worktree: ~/code/.worktrees/cictl-affected-relative-c
