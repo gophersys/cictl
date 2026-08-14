@@ -187,7 +187,7 @@ func equalStrings(a, b []string) bool {
 // nearestProjectRoot builds `dir` relative while repoAbs is absolute, so Rel/within
 // error and every changed file is dropped — the relative call returns a false-empty
 // set (rc=0, "no affected projects"). This test cannot be t.Parallel: it t.Chdir's.
-func TestProjects_RelativeRepoDirMatchesAbsolute(t *testing.T) {
+func TestProjects_RelativeRepoDirMatchesAbsolute(t *testing.T) { //nolint:paralleltest // t.Chdir mutates the process CWD; this test and its subtests must run serially
 	cases := []struct {
 		name    string
 		build   func(t *testing.T) string
@@ -207,7 +207,7 @@ func TestProjects_RelativeRepoDirMatchesAbsolute(t *testing.T) {
 			want:    []string{"."},
 		},
 	}
-	for _, tc := range cases {
+	for _, tc := range cases { //nolint:paralleltest // t.Chdir mutates the process CWD; this test and its subtests must run serially
 		t.Run(tc.name, func(t *testing.T) {
 			dir := tc.build(t)
 			commitChange(t, dir, tc.changed, "// touched\n")
