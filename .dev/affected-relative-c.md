@@ -1,10 +1,10 @@
 # affected-relative-c
 
-phase:    pr
+phase:    wait
 repo:     gophersys/cictl
 branch:   fix/affected-relative-c
 worktree: ~/code/.worktrees/cictl-affected-relative-c
-pr:       -
+pr:       20
 attempt:  0/2
 
 ## REMINDER: delete this .dev file in the FINAL commit before merge; prove gone with git cat-file -e.
