@@ -1,6 +1,6 @@
 # affected-relative-c
 
-phase:    green
+phase:    pr
 repo:     gophersys/cictl
 branch:   fix/affected-relative-c
 worktree: ~/code/.worktrees/cictl-affected-relative-c
@@ -55,3 +55,12 @@ Nothing. cictl quiet (0 open PRs), non-Mateo, local-impact bug.
 dev-test-author: write the RED test (relative `-C` == absolute `-C`), prove it fails for the right
 reason (relative returns empty). Ownership: affected_test.go → dev-test-author; affected.go →
 dev-implementer.
+
+## Proven (green) + verification
+- dev-implementer (1186a11, only affected.go, +1/-1): moved repoAbs computation above `dir`, joined
+  with repoAbs. `go test ./internal/affected/...` rc=0 — both new subtests + all 4 pre-existing pass;
+  full `go test ./...` (10 pkgs) rc=0; vet rc=0; gofumpt/gofmt clean.
+- Orchestrator re-ran: affected suite ok, `go build ./...` rc=0. Scope = affected.go (+1/-1) + the test.
+- Adversarial bar MET: the test FAILS without the fix (proven by test-author AND implementer red runs)
+  and passes with it; the absolute-path case CI relies on is unchanged (existing tests use absolute
+  temp dirs and pass). One-line change, no scope creep — no separate verifier subagent needed.
