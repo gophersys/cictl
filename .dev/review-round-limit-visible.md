@@ -1,6 +1,6 @@
 # review-round-limit-visible
 
-phase:    green
+phase:    verify
 repo:     gophersys/cictl
 branch:   fix/review-round-limit-visible
 worktree: ~/code/.worktrees/cictl-review-limit-visible
@@ -72,6 +72,22 @@ one-per-push — planner to decide, stated).
 On the round-limit branch, before `exit 0`, post a PR comment stating the push was not reviewed,
 the round limit reached, and the remedy (review manually or bump `REVIEW_MAX_ROUNDS`). Keep exit 0.
 The comment must be visible on the PR and must NOT be counted as a review round.
+
+## Proven (green)
+- dev-implementer (commit f7b8c72, only review.sh, +19): SKIP_MARKER at col 0 + skip-notice posted
+  on the round-limit branch (contains "not reviewed", "limit", "REVIEW_MAX_ROUNDS"; carries
+  SKIP_MARKER; never the review marker), exit 0 preserved. `bash ./ctl.sh test-review` rc=0 — all 30
+  behaviour tests ok, all 30 mutations redden their own test ("all 30 guards hold, and all 30 are
+  proven able to fail"). Both new tests green + proven-able-to-fail; relaxed test 3 green + still
+  reddened by MAX_ROUNDS=99. shellcheck review/review.sh clean (rc=0).
+
+## Gate strategy (shell-only change)
+The change is entirely in review.sh (a shell script — NOT Go, not built, not go-tested). cictl's
+`ctl.sh gate` = build + lint(shellcheck+golangci+actionlint) + test -race. The ONLY components a
+review.sh change touches are shellcheck (clean) + the review test suite (test-review, 30/30 both
+phases). Go build/test/golangci and actionlint (workflows) are unaffected — confirmed authoritatively
+by the cictl PR ci.yml on the real runner (which has actionlint; absent locally + in base-runner).
+No emulated local full-gate — it would only re-confirm Go components this change cannot alter.
 
 ## Blocked
 Nothing. cictl is quiet (0 open PRs). Non-Mateo.
