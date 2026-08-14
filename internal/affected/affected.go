@@ -68,11 +68,11 @@ func changedFiles(repoDir, base string) ([]string, error) {
 // root, returning the first directory that is a project (has both ctl.sh and
 // project.json). The returned root is repo-relative with forward slashes.
 func nearestProjectRoot(repoDir, relFile string) (string, bool) {
-	dir := filepath.Dir(filepath.Join(repoDir, filepath.FromSlash(relFile)))
 	repoAbs, err := filepath.Abs(repoDir)
 	if err != nil {
 		repoAbs = repoDir
 	}
+	dir := filepath.Dir(filepath.Join(repoAbs, filepath.FromSlash(relFile)))
 	for {
 		if isProjectDir(dir) {
 			rel, err := filepath.Rel(repoAbs, dir)
