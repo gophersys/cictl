@@ -87,6 +87,10 @@ EOF
 #!/usr/bin/env bash
 set -eu
 printf '%s\n' "\$*" >> "$sb/calls/claude.log"
+# Drain the prompt (stdin) into prompt_seen so a test can read what the reviewer
+# was told. The closing pass sends a verdict-only directive, and this is how it
+# is inspected without paying for a real agent.
+cat > "$sb/prompt_seen"
 if [ -f "$sb/fx/stream" ]; then
   cat "$sb/fx/stream"
 else
@@ -183,8 +187,16 @@ assert_stderr_has() {
 assert_stdout_has() {
   grep -qF -- "$1" "$SB/stdout" || fail "stdout never said \"$1\"; it said: $(cat "$SB/stdout")"
 }
+# Case-insensitive variant, for a log phrase whose exact capitalization is the
+# implementer's choice, not the contract.
+assert_stdout_has_i() {
+  grep -qiF -- "$1" "$SB/stdout" || fail "stdout never said (any case) \"$1\"; it said: $(cat "$SB/stdout")"
+}
 assert_not_called() {
   [ ! -f "$SB/calls/$1.log" ] || fail "$1 ran, and must not have: $(cat "$SB/calls/$1.log")"
+}
+assert_called() {
+  [ -f "$SB/calls/$1.log" ] || fail "$1 was not invoked, and must have been"
 }
 assert_no_comment() {
   ! grep -q 'pr comment' "$SB/calls/gh.log" 2>/dev/null || fail "a review was posted, and must not have been"
@@ -493,7 +505,7 @@ t_the_first_run_is_round_1() {
   local sb; sb="$(new_sandbox)"
   run_review "$sb" ${CREDS[@]+"${CREDS[@]}"} -- 1
   assert_rc_zero
-  assert_stdout_has "posted round 1 of 2"
+  assert_stdout_has "posted round 1 of 4"
 }
 
 t_a_second_run_is_round_2_and_sees_the_first() {
@@ -501,21 +513,7 @@ t_a_second_run_is_round_2_and_sees_the_first() {
   rounds_with 1 > "$sb/fx/comments"
   run_review "$sb" ${CREDS[@]+"${CREDS[@]}"} -- 1
   assert_rc_zero
-  assert_stdout_has "posted round 2 of 2"
-}
-
-# The ceiling Mateo asked for. Without it every push buys a fresh full-price
-# review, which is a spend defect and not only a logic one.
-t_a_third_run_refuses_before_it_costs_anything() {
-  local sb; sb="$(new_sandbox)"
-  rounds_with 2 > "$sb/fx/comments"
-  run_review "$sb" ${CREDS[@]+"${CREDS[@]}"} -- 1
-  # Exit 0: the ceiling is the design working. A job that is permanently red for
-  # a correct reason teaches people to ignore red.
-  assert_rc_zero
-  assert_stdout_has "limit is reached"
-  # The point of the ceiling is spend. The agent must never be reached.
-  assert_not_called claude
+  assert_stdout_has "posted round 2 of 4"
 }
 
 t_the_round_ceiling_is_configurable() {
@@ -542,7 +540,7 @@ t_the_posted_review_carries_the_marker() {
 # comment stating the push was not reviewed, that the limit was hit, and the remedy.
 t_a_round_limit_skip_posts_a_visible_notice() {
   local sb; sb="$(new_sandbox)"
-  rounds_with 2 > "$sb/fx/comments"
+  rounds_with 5 > "$sb/fx/comments"
   run_review "$sb" ${CREDS[@]+"${CREDS[@]}"} -- 1
   # Exit 0: the ceiling stays green, as the author chose.
   assert_rc_zero
@@ -564,7 +562,7 @@ t_a_round_limit_skip_posts_a_visible_notice() {
 # push would count this skip as a round and the ceiling would cascade.
 t_the_skip_notice_is_not_counted_as_a_round() {
   local sb; sb="$(new_sandbox)"
-  rounds_with 2 > "$sb/fx/comments"
+  rounds_with 5 > "$sb/fx/comments"
   run_review "$sb" ${CREDS[@]+"${CREDS[@]}"} -- 1
   assert_rc_zero
   assert_comment_posted
@@ -574,6 +572,65 @@ t_the_skip_notice_is_not_counted_as_a_round() {
   # property that keeps the notice uncounted by the marker query.
   ! grep -qF -- '<!-- gophersys-review-agent -->' "$SB/posted_body" \
     || fail "the skip notice carries the review marker, so the next push counts it as a round"
+}
+
+# After the ceiling, the reviewer does NOT go silent forever. Round MAX+1 is a
+# single CLOSING pass: it runs the agent once more with a verdict-only directive
+# and posts the verdict WITH the review marker, so a pull request that fixed its
+# round-2 findings can clear itself instead of collecting a skip notice on every
+# push. At the default ceiling of 4 this is round 5, so rounds_with 4 lands on it.
+t_the_round_after_the_limit_is_a_closing_pass() {
+  local sb; sb="$(new_sandbox)"
+  rounds_with 4 > "$sb/fx/comments"
+  run_review "$sb" ${CREDS[@]+"${CREDS[@]}"} -- 1
+  assert_rc_zero
+  # The whole point: the agent IS reached on the closing pass. On today's code
+  # round 5 is past the ceiling of 2 and hard-skips, so this is the red the
+  # feature turns green.
+  assert_called claude
+  # The run announces, in its log, that this is the closing pass. This is what
+  # tells a closing pass apart from an ordinary round, so raising MAX_ROUNDS (the
+  # mutation) turns round 5 back into an ordinary review and drops this line.
+  assert_stdout_has_i "closing pass"
+  # The verdict is posted WITH the review marker, so it is counted like any round
+  # and the loop is bounded to exactly one closing pass.
+  assert_comment_posted
+  grep -qF -- 'APPROVE' "$SB/posted_body" \
+    || fail "the closing pass did not post the reviewer's APPROVE verdict: $(cat "$SB/posted_body")"
+  grep -qF -- '<!-- gophersys-review-agent -->' "$SB/posted_body" \
+    || fail "the closing-pass review carries no marker, so the next push cannot count it"
+}
+
+# The closing pass is verdict-only by construction: its prompt tells the agent to
+# judge only whether the prior findings are resolved and to open NO new finding.
+# The stub drains the prompt into prompt_seen so that directive can be read back.
+t_the_closing_pass_is_verdict_only() {
+  local sb; sb="$(new_sandbox)"
+  rounds_with 4 > "$sb/fx/comments"
+  run_review "$sb" ${CREDS[@]+"${CREDS[@]}"} -- 1
+  assert_rc_zero
+  [ -f "$SB/prompt_seen" ] \
+    || fail "the closing pass never ran: the agent was sent no prompt to inspect"
+  grep -qiF -- 'no new finding' "$SB/prompt_seen" \
+    || fail "the closing-pass prompt did not forbid new findings: $(cat "$SB/prompt_seen")"
+}
+
+# There is exactly ONE closing pass. Round MAX+2 and beyond are the hard-stop
+# again: the agent is NOT reached, and a skip notice (not counted as a round) is
+# left on the pull request. At the default ceiling of 4 this is round 6, so
+# rounds_with 5 lands one past the closing pass.
+t_after_the_closing_pass_no_further_review() {
+  local sb; sb="$(new_sandbox)"
+  rounds_with 5 > "$sb/fx/comments"
+  run_review "$sb" ${CREDS[@]+"${CREDS[@]}"} -- 1
+  assert_rc_zero
+  # Past the single closing pass, spend stops: the agent is never reached again.
+  assert_not_called claude
+  assert_comment_posted
+  grep -qF -- 'not reviewed' "$SB/posted_body" \
+    || fail "the skip notice does not say the push was not reviewed: $(cat "$SB/posted_body")"
+  grep -qF -- '<!-- gophersys-review-agent-skip -->' "$SB/posted_body" \
+    || fail "the skip notice carries no skip marker: $(cat "$SB/posted_body")"
 }
 
 TESTS=(
@@ -602,11 +659,13 @@ TESTS=(
   t_an_empty_stream_is_refused
   t_the_first_run_is_round_1
   t_a_second_run_is_round_2_and_sees_the_first
-  t_a_third_run_refuses_before_it_costs_anything
   t_the_round_ceiling_is_configurable
   t_the_posted_review_carries_the_marker
   t_a_round_limit_skip_posts_a_visible_notice
   t_the_skip_notice_is_not_counted_as_a_round
+  t_the_round_after_the_limit_is_a_closing_pass
+  t_the_closing_pass_is_verdict_only
+  t_after_the_closing_pass_no_further_review
 )
 
 # MARKER_COVERAGE maps every marker in review.sh to the test that proves it.
@@ -631,7 +690,9 @@ guard:empty-output          t_empty_reviewer_output_is_not_posted
 guard:verdict               t_an_unreadable_verdict_is_posted_and_then_fails
 guard:verdict-unparsed      t_an_unreadable_verdict_is_posted_and_then_fails
 guard:denials               t_a_denied_read_is_posted_and_then_fails_the_job
-guard:round-limit           t_a_third_run_refuses_before_it_costs_anything
+guard:round-limit           t_the_round_after_the_limit_is_a_closing_pass
+guard:closing-pass          t_the_closing_pass_is_verdict_only
+guard:closing-pass-once     t_after_the_closing_pass_no_further_review
 guard:skip-notice           t_a_round_limit_skip_posts_a_visible_notice
 guard:skip-uncounted        t_the_skip_notice_is_not_counted_as_a_round
 verdict:request-changes     t_a_verdict_may_carry_its_reason
@@ -689,8 +750,14 @@ mutation_for() {
     t_a_verdict_may_carry_its_reason)            printf 's|^RE_REQUEST_CHANGES=.*|RE_REQUEST_CHANGES="^REQUEST_CHANGES[[:space:]]*$"|' ;;
     t_the_first_run_is_round_1)                  printf 's|^round=.*|round=99|' ;;
     t_a_second_run_is_round_2_and_sees_the_first) printf 's|^round=.*|round=1|' ;;
-    # Raise the ceiling out of the way, so a third round proceeds and spends.
-    t_a_third_run_refuses_before_it_costs_anything) printf 's|^MAX_ROUNDS=.*|MAX_ROUNDS=99|' ;;
+    # Raise the ceiling out of the way, so round MAX+1 is an ordinary review and
+    # drops the "closing pass" log line the test reads.
+    t_the_round_after_the_limit_is_a_closing_pass) printf 's|^MAX_ROUNDS=.*|MAX_ROUNDS=99|' ;;
+    # Delete the line that injects the verdict-only directive into the prompt.
+    t_the_closing_pass_is_verdict_only)          printf '/# guard:closing-pass$/d' ;;
+    # Widen the hard-stop threshold so round MAX+2 runs a SECOND closing pass
+    # instead of skipping; the guarded line is the `round > MAX_ROUNDS+1` test.
+    t_after_the_closing_pass_no_further_review)  printf 's|^.*# guard:closing-pass-once$|if [ "$round" -gt 9999 ]; then|' ;;
     # Delete the post line, so the round-limit skip leaves nothing on the pull request.
     t_a_round_limit_skip_posts_a_visible_notice) printf '/# guard:skip-notice$/d' ;;
     # Swap the skip marker to the review marker, so the notice would be counted as a round.
