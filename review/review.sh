@@ -148,7 +148,7 @@ fi
   if [ "$closing_pass" = "yes" ]; then
     printf 'YOUR PREVIOUS REVIEW:\n%s\n\n' "$previous"
     printf 'CLOSING PASS. Judge ONLY whether the prior review findings are resolved. Open no new finding under any circumstance. APPROVE if all are resolved, else REQUEST_CHANGES.\n\n' # guard:closing-pass
-  elif [ "$round" = "2" ]; then
+  elif [ "$round" -gt 1 ]; then
     printf 'YOUR PREVIOUS REVIEW:\n%s\n\n' "$previous"
     printf 'Judge only whether each earlier finding is now resolved. Do not open a\n'
     printf 'new front unless the fix introduced it.\n\n'
