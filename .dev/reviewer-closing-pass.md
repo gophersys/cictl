@@ -1,6 +1,6 @@
 # reviewer-closing-pass
 
-phase:    plan
+phase:    red
 repo:     gophersys/cictl
 branch:   fix/reviewer-closing-pass
 worktree: ~/code/.worktrees/cictl-closing-pass
@@ -36,3 +36,30 @@ pass (verdict-only, no-new-findings, still hard-bounded so it cannot loop) + the
 (a fixture where round>MAX with prior findings addressed must now APPROVE, not skip; and a guard
 that the closing pass cannot open a NEW finding). Owners: review_test.sh + fixtures -> dev-test-author;
 review/review.sh + CLAUDE.md prompt -> dev-implementer.
+
+## Plan — SELF-APPROVED (--auto), risk: shared reviewer, org-wide blast radius; edit is confined to the round>MAX_ROUNDS branch (rounds 1..MAX byte-identical) + a bounded, counted closing pass.
+The fix (dev-planner, folding Mateo's MAX_ROUNDS 2->4):
+- review/review.sh L108-124: replace the blanket skip with a 3-way split on `round`:
+  `<= MAX_ROUNDS` normal (unchanged); `== MAX_ROUNDS+1` set closing_pass=yes and run the
+  NORMAL path (agent call, verdict parse, post with MARKER so it is COUNTED -> exactly one
+  closing pass); `> MAX_ROUNDS+1` the existing SKIP_MARKER hard-stop. Guards:
+  `# guard:round-limit`, `# guard:closing-pass`, `# guard:closing-pass-once`.
+- review/review.sh L31: MAX_ROUNDS default 2 -> 4 (`${REVIEW_MAX_ROUNDS:-4}`), still env-overridable.
+- review/review.sh prompt block L131: closing-pass branch injects `previous` + a one-line directive
+  (CLOSING PASS: judge ONLY whether the prior review's findings are resolved; open NO new finding;
+  APPROVE if all resolved else REQUEST_CHANGES).
+- review/CLAUDE.md: add `## The closing pass` after `## Your verdict` (verdict-only, no new finding, final).
+Tests (dev-test-author owns review_test.sh + the sandbox `claude` stub): extend the stub to drain
+stdin to $sb/prompt_seen. 3 new: (1) t_the_round_after_the_limit_is_a_closing_pass — round MAX+1
+calls claude, posts APPROVE with MARKER (RED today: blanket skip, claude not called); (2)
+t_the_closing_pass_is_verdict_only — captured prompt contains the no-new-finding directive; (3)
+t_after_the_closing_pass_no_further_review — round MAX+2 skips (SKIP_MARKER), claude NOT called.
+Retarget: delete t_a_third_run_refuses_before_it_costs_anything; move the two skip-notice tests to
+round MAX+2. Add a test pinning the DEFAULT ceiling == 4. Make closing-pass boundary tests set
+REVIEW_MAX_ROUNDS explicitly (deterministic regardless of the new default). Add the 2 new markers to
+MARKER_COVERAGE + mutation_for. Gate: `bash ./ctl.sh test-review` (runs under bash 3.2, local) + shellcheck;
+CI runs full `gate` (Go unaffected — only shell changed).
+
+## Next
+dev-test-author: write the tests + stub change, PROVE t_the_round_after_the_limit_is_a_closing_pass RED
+on current code (round MAX+1 skips today). Then implementer.
