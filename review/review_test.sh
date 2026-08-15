@@ -516,6 +516,30 @@ t_a_second_run_is_round_2_and_sees_the_first() {
   assert_stdout_has "posted round 2 of 4"
 }
 
+# review/CLAUDE.md ## Limits promises the agent that "a later round sees your own
+# earlier comments ... do not open a new front". That promise holds for EVERY
+# round in the loop, not only round 2, so every middle round must be handed the
+# prior review and the judge-only directive. rounds_with 2 makes this round 3 at
+# the default ceiling of 4 — neither round 2 nor the closing pass, which are the
+# only rounds that inject today, so it is exactly the round that reviews fresh and
+# can open a new front. Read the prompt the stub drained, not just the counter:
+# t_a_second_run above asserts only "round 2 of 4", never the prompt content.
+t_a_middle_round_sees_the_prior_review() {
+  local sb; sb="$(new_sandbox)"
+  rounds_with 2 > "$sb/fx/comments"
+  run_review "$sb" ${CREDS[@]+"${CREDS[@]}"} -- 1
+  assert_rc_zero
+  assert_stdout_has "posted round 3 of 4"
+  [ -f "$SB/prompt_seen" ] \
+    || fail "the middle round never ran: the agent was sent no prompt to inspect"
+  # (a) the prior review is injected, so this round judges it instead of repeating it.
+  grep -qF -- 'YOUR PREVIOUS REVIEW' "$SB/prompt_seen" \
+    || fail "round 3 was not shown the prior review: $(cat "$SB/prompt_seen")"
+  # (b) the judge-only / no-new-front directive rides with it.
+  grep -qF -- 'Judge only whether each earlier finding' "$SB/prompt_seen" \
+    || fail "round 3 was not told to judge only and open no new front: $(cat "$SB/prompt_seen")"
+}
+
 t_the_round_ceiling_is_configurable() {
   local sb; sb="$(new_sandbox)"
   rounds_with 2 > "$sb/fx/comments"
@@ -584,9 +608,9 @@ t_the_round_after_the_limit_is_a_closing_pass() {
   rounds_with 4 > "$sb/fx/comments"
   run_review "$sb" ${CREDS[@]+"${CREDS[@]}"} -- 1
   assert_rc_zero
-  # The whole point: the agent IS reached on the closing pass. On today's code
-  # round 5 is past the ceiling of 2 and hard-skips, so this is the red the
-  # feature turns green.
+  # The whole point: the agent IS reached on the closing pass. At the default
+  # ceiling of 4, round 5 is MAX_ROUNDS+1 — the single closing pass — so the agent
+  # runs once more here instead of hard-skipping.
   assert_called claude
   # The run announces, in its log, that this is the closing pass. This is what
   # tells a closing pass apart from an ordinary round, so raising MAX_ROUNDS (the
@@ -659,6 +683,7 @@ TESTS=(
   t_an_empty_stream_is_refused
   t_the_first_run_is_round_1
   t_a_second_run_is_round_2_and_sees_the_first
+  t_a_middle_round_sees_the_prior_review
   t_the_round_ceiling_is_configurable
   t_the_posted_review_carries_the_marker
   t_a_round_limit_skip_posts_a_visible_notice
@@ -750,6 +775,12 @@ mutation_for() {
     t_a_verdict_may_carry_its_reason)            printf 's|^RE_REQUEST_CHANGES=.*|RE_REQUEST_CHANGES="^REQUEST_CHANGES[[:space:]]*$"|' ;;
     t_the_first_run_is_round_1)                  printf 's|^round=.*|round=99|' ;;
     t_a_second_run_is_round_2_and_sees_the_first) printf 's|^round=.*|round=1|' ;;
+    # No guard marks the round-2..MAX injection: it is a plain condition on $round,
+    # so this follows the content-assertion convention above rather than deleting a
+    # guard marker. Strike the directive line the injecting round must carry; with it
+    # gone, a middle round still sees YOUR PREVIOUS REVIEW but not the judge-only
+    # directive, and the (b) assertion fails.
+    t_a_middle_round_sees_the_prior_review)      printf 's|.*Judge only whether each earlier finding.*|:|' ;;
     # Raise the ceiling out of the way, so round MAX+1 is an ordinary review and
     # drops the "closing pass" log line the test reads.
     t_the_round_after_the_limit_is_a_closing_pass) printf 's|^MAX_ROUNDS=.*|MAX_ROUNDS=99|' ;;
