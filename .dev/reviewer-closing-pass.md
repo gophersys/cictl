@@ -23,7 +23,10 @@ under the granted authority without Mateo.
 (dev-planner fills this — see Next.)
 
 ## Proven
-(empty)
+- Phase 2 RED (bash 3.2, `bash ./ctl.sh test-review`): t_the_round_after_the_limit_is_a_closing_pass FAIL "claude was not invoked" (round 5 hit the old blanket skip); round-1/round-2 tests FAIL "of 2" not "of 4"; closing-pass-verdict-only FAIL "closing pass never ran".
+- Phase 3 GREEN (`bash ./ctl.sh test-review`) rc=0: "all 32 guards hold, and all 32 are proven able to fail"; shellcheck -x -S style review/review.sh rc=0.
+- Phase 4 verifier (adversarial): boundedness SOUND (broke guard:closing-pass-once by Edit -> round 6 ran a 2nd agent call, caught, reverted); closing pass APPROVEs + is counted (posts MARKER); no band-aid (the no-new-finding directive is in the piped prompt); all 32 mutations genuine. Found the round-3/4 fresh-review defect below.
+- Round-3/4 fix (this addendum): elif round==2 -> round>1 so rounds 2-4 all inject the prior review + judge-only directive, making CLAUDE.md ## Limits true. Proven by a new round-3 content test (red->green).
 
 ## Blocked
 Nothing.
