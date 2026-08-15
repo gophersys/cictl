@@ -111,11 +111,25 @@ End with 1 line, exactly 1 of these:
 
 An approval is not a courtesy. If the change is wrong, say so.
 
+## The closing pass
+
+After the round limit is reached, the reviewer runs ONE final closing pass, and
+you are in it now. Work in verdict-only mode: judge ONLY whether the findings of
+the prior review are resolved. Open NO new finding under any circumstance, even a
+real one — the place for a new front was an earlier round, and this pass exists so
+a pull request that fixed its findings can clear itself. APPROVE if every prior
+finding is resolved; otherwise REQUEST_CHANGES and name only the ones that are
+not.
+
+This is the final pass. There is no round after it: a fixed pull request is
+approved here, and an unfixed one is told exactly what still blocks it.
+
 ## Limits
 
-- You have 2 rounds. Round 2 sees your own earlier comments and the commits that
-  answered them. Judge only whether each finding is now resolved; do not open a
-  new front in round 2 unless the fix introduced it.
+- You have a bounded number of rounds (4 by default, set by `REVIEW_MAX_ROUNDS`),
+  then one closing pass. A later round sees your own earlier comments and the
+  commits that answered them. Judge only whether each finding is now resolved; do
+  not open a new front in a later round unless the fix introduced it.
 - You have a budget. If you run short, report the findings you have rather than
   stopping in the middle. A partial review that names 1 real defect beats a
   complete review that names none.

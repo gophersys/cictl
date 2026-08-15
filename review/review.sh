@@ -28,7 +28,7 @@ MODEL="${REVIEW_MODEL:-claude-opus-4-5}"
 BUDGET_USD="${REVIEW_BUDGET_USD:-25}"
 MAX_TURNS="${REVIEW_MAX_TURNS:-40}"
 # The round ceiling Mateo asked for: bounded, and configurable in 1 place.
-MAX_ROUNDS="${REVIEW_MAX_ROUNDS:-2}" # guard:round-limit
+MAX_ROUNDS="${REVIEW_MAX_ROUNDS:-4}" # guard:round-limit
 # The footer that marks a comment as this agent's. It is how a round is counted,
 # so it must be posted with every review and must never be edited by hand.
 MARKER="<!-- gophersys-review-agent -->"
@@ -101,12 +101,21 @@ previous="$(gh pr view "$PR" --json comments \
 rounds_done="$(gh pr view "$PR" --json comments \
   --jq "[.comments[] | select(.body | contains(\"$MARKER\"))] | length" 2>/dev/null || echo 0)"
 round=$(( rounds_done + 1 ))
-# Reaching the ceiling is the design working, not a failure. The first version
-# exited 1 here, which turned every pull request that took a third push red for
+# After the ceiling the loop does not go silent forever. There are 3 cases now,
+# split on $round:
+#   1..MAX_ROUNDS       an ordinary review, unchanged (the prompt block below).
+#   MAX_ROUNDS + 1      ONE closing pass: the same agent path, with a verdict-only
+#                       directive that judges the prior findings and opens none. It
+#                       posts with MARKER, so it is counted and cannot repeat.
+#   MAX_ROUNDS + 2 ...  the hard stop. Spend is over; leave a visible, UNcounted
+#                       skip notice and exit green.
+#
+# Reaching the hard stop is the design working, not a failure. The first version
+# exited 1 here, which turned every pull request that took another push red for
 # the rest of its life — and a check that is permanently red for a correct reason
 # is exactly what teaches people to ignore red.
-if [ "$round" -gt "$MAX_ROUNDS" ]; then
-  log "${rounds_done} review(s) already posted on #${PR}; the ${MAX_ROUNDS}-round limit is reached, so this push is not reviewed"
+if [ "$round" -gt "$(( MAX_ROUNDS + 1 ))" ]; then # guard:closing-pass-once
+  log "${rounds_done} review(s) already posted on #${PR}; the ${MAX_ROUNDS}-round limit and its closing pass are spent, so this push is not reviewed"
   # A green pr-review check with nothing on the pull request reads as a review
   # that happened. Leave a visible trace instead of only a runner-log line: state
   # that the push was not reviewed, why, and the remedy. SKIP_MARKER, not MARKER,
@@ -123,12 +132,23 @@ if [ "$round" -gt "$MAX_ROUNDS" ]; then
   exit 0
 fi
 
+# Round MAX_ROUNDS + 1 is the single closing pass. It runs the ordinary agent path
+# below; the only difference is the verdict-only directive added to the prompt.
+closing_pass=no
+if [ "$round" -eq "$(( MAX_ROUNDS + 1 ))" ]; then
+  closing_pass=yes
+  log "round ${round} is past the ${MAX_ROUNDS}-round limit; running a single closing pass to judge whether the prior findings are resolved"
+fi
+
 {
-  printf 'Review pull request #%s in %s. This is round %s of 2.\n\n' \
-    "$PR" "${GITHUB_REPOSITORY:-this repository}" "$round"
+  printf 'Review pull request #%s in %s. This is round %s of %s.\n\n' \
+    "$PR" "${GITHUB_REPOSITORY:-this repository}" "$round" "$MAX_ROUNDS"
   printf 'Title: %s\n\n' "$(gh pr view "$PR" --json title --jq .title)"
   printf 'Description:\n%s\n\n' "$(gh pr view "$PR" --json body --jq '.body // "(none)"')"
-  if [ "$round" = "2" ]; then
+  if [ "$closing_pass" = "yes" ]; then
+    printf 'YOUR PREVIOUS REVIEW:\n%s\n\n' "$previous"
+    printf 'CLOSING PASS. Judge ONLY whether the prior review findings are resolved. Open no new finding under any circumstance. APPROVE if all are resolved, else REQUEST_CHANGES.\n\n' # guard:closing-pass
+  elif [ "$round" = "2" ]; then
     printf 'YOUR PREVIOUS REVIEW:\n%s\n\n' "$previous"
     printf 'Judge only whether each earlier finding is now resolved. Do not open a\n'
     printf 'new front unless the fix introduced it.\n\n'
