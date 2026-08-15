@@ -1,6 +1,6 @@
 # reviewer-closing-pass
 
-phase:    green
+phase:    verify
 repo:     gophersys/cictl
 branch:   fix/reviewer-closing-pass
 worktree: ~/code/.worktrees/cictl-closing-pass
