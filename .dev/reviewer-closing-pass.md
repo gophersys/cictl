@@ -63,3 +63,12 @@ CI runs full `gate` (Go unaffected — only shell changed).
 ## Next
 dev-test-author: write the tests + stub change, PROVE t_the_round_after_the_limit_is_a_closing_pass RED
 on current code (round MAX+1 skips today). Then implementer.
+
+## Plan FINALIZED (planner re-ran with MAX_ROUNDS=4 folded in)
+Deltas from the note above: default ceiling is 4 so the closing pass is round 5 — tests use
+`rounds_with 4` (closing pass) and `rounds_with 5` (round 6 skip) at the DEFAULT, so test 1 proves
+BOTH the bump and the closing pass (RED today: default 2 -> round 5 hard-skips). ALSO fix review.sh
+L127 `round %s of 2` literal -> dynamic `${MAX_ROUNDS}` (now wrong with default 4; # guard-free, one line).
+Retarget "of 2"->"of 4" in t_the_first_run_is_round_1/..round_2; move the 2 skip-notice tests to
+`rounds_with 5`; keep t_the_round_ceiling_is_configurable (override MAX=3). SPEND: <=5 paid runs vs 2
+per PR across every repo — Mateo's explicit choice, flagged.
