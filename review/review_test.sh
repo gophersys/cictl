@@ -298,14 +298,83 @@ t_temp_files_are_removed_when_the_run_fails() {
     || fail "the cleanup trap broke: $(cat "$SB/stderr")"
 }
 
-t_empty_reviewer_output_is_not_posted() {
+# An empty reviewer output is never posted AS A REVIEW. It is one shape of the
+# no-verdict end: a death notice (skip-marked, uncounted) is posted so the pull
+# request shows why there is nothing, and the job still fails. The mutation
+# removes the die, so the empty text would flow on into the verdict path and be
+# posted WITH the review marker — a counted, empty review — which the MARKER
+# assertion below catches.
+t_an_empty_output_is_not_posted_as_a_review() {
   local sb; sb="$(new_sandbox)"
   : > "$sb/fx/out"
   printf '2\n' > "$sb/fx/rc"
   run_review "$sb" ${CREDS[@]+"${CREDS[@]}"} -- 1
   assert_rc_nonzero
-  assert_stderr_has "the reviewer produced no output (exit 2)"
-  assert_no_comment
+  assert_stderr_has "died with no verdict"
+  assert_stderr_has "exit 2"
+  # The death is visible, but nothing on the pull request carries the review
+  # marker, so nothing is counted as a round.
+  assert_comment_posted
+  ! grep -qF -- '<!-- gophersys-review-agent -->' "$SB/posted_body" \
+    || fail "an empty review was posted with the review marker: $(cat "$SB/posted_body")"
+}
+
+# Ledger #79: the turn-cap death. A run can exhaust MAX_TURNS mid-tool-call
+# (stop: tool_use), and the CLI then emits an error-variant result event —
+# subtype error_max_turns, is_error true, and NO .result field, because no
+# error variant carries one (verified against claude 2.1.229). This fixture is
+# that real shape. There is no review and no verdict line to read, and the
+# first version died here with only a runner-log line — the budget was spent,
+# the pull request showed nothing, and the red check never said why. The death
+# must leave a visible notice on the pull request naming the spend, the turns
+# against the cap, the stop reason and the remedy, and the job must still
+# fail. (The is_error:false empty-text shape is pinned by
+# t_an_empty_output_is_not_posted_as_a_review above.)
+t_a_no_verdict_death_posts_and_fails() {
+  local sb; sb="$(new_sandbox)"
+  jq -n '{type:"result",subtype:"error_max_turns",is_error:true,total_cost_usd:18.73,num_turns:40,duration_ms:600000,stop_reason:"tool_use",permission_denials:[]}' > "$sb/fx/stream"
+  run_review "$sb" ${CREDS[@]+"${CREDS[@]}"} -- 1
+  # (b) the check is RED: a spent budget with no verdict is a failure.
+  assert_rc_nonzero
+  assert_stderr_has "died with no verdict"
+  # (a) the death is visible on the pull request, not only in the runner log.
+  assert_comment_posted
+  grep -qF -- 'no verdict' "$SB/posted_body" \
+    || fail "the notice does not say the review died with no verdict: $(cat "$SB/posted_body")"
+  grep -qF -- '18.73' "$SB/posted_body" \
+    || fail "the notice does not name the spend: $(cat "$SB/posted_body")"
+  grep -qF -- '40 of 40 turns' "$SB/posted_body" \
+    || fail "the notice does not name the turn cap: $(cat "$SB/posted_body")"
+  grep -qF -- 'tool_use' "$SB/posted_body" \
+    || fail "the notice does not name the stop reason: $(cat "$SB/posted_body")"
+  grep -qiF -- 'manually' "$SB/posted_body" \
+    || fail "the notice does not state the remedy (re-run or review manually): $(cat "$SB/posted_body")"
+}
+
+# The death notice must never consume a round: it carries SKIP_MARKER, not
+# MARKER, so a later push still gets its full round count. A death that ate a
+# round would burn the ceiling on runs that produced nothing. Proven
+# functionally, not only by marker text: the notice a death run posted is fed
+# back as a pull request comment beside 1 real review, and the next run counts
+# only the review.
+t_the_no_verdict_notice_consumes_no_round() {
+  local sb; sb="$(new_sandbox)"
+  jq -n '{type:"result",subtype:"error_max_turns",is_error:true,total_cost_usd:21.9,num_turns:40,duration_ms:600000,stop_reason:"tool_use",permission_denials:[]}' > "$sb/fx/stream"
+  run_review "$sb" ${CREDS[@]+"${CREDS[@]}"} -- 1
+  assert_rc_nonzero
+  assert_comment_posted
+  grep -qF -- '<!-- gophersys-review-agent-skip -->' "$SB/posted_body" \
+    || fail "the death notice carries no skip marker: $(cat "$SB/posted_body")"
+  ! grep -qF -- '<!-- gophersys-review-agent -->' "$SB/posted_body" \
+    || fail "the death notice carries the review marker, so the next push would count it as a round"
+  # The functional proof: with the notice AND 1 real review on the pull
+  # request, the next run is round 2 — the notice consumed no round.
+  local sb2; sb2="$(new_sandbox)"
+  jq -n --rawfile notice "$sb/posted_body" \
+    '{comments:[{body:$notice},{body:"a finding\n\n<!-- gophersys-review-agent -->"}]}' > "$sb2/fx/comments"
+  run_review "$sb2" ${CREDS[@]+"${CREDS[@]}"} -- 1
+  assert_rc_zero
+  assert_stdout_has "posted round 2 of 4"
 }
 
 # An unreadable verdict must NEVER discard the review. The body is posted, it is
@@ -321,15 +390,6 @@ t_an_unreadable_verdict_is_posted_and_then_fails() {
   grep -qF -- 'a real defect worth keeping' "$SB/posted_body" \
     || fail "the paid review was discarded instead of posted"
   assert_stdout_has "verdict: REQUEST_CHANGES"
-}
-
-t_output_without_a_verdict_is_not_posted() {
-  local sb; sb="$(new_sandbox)"
-  printf 'I read the diff. It looks good to me.\nAPPROVED maybe.\n' > "$sb/fx/out"
-  run_review "$sb" ${CREDS[@]+"${CREDS[@]}"} -- 1
-  assert_rc_nonzero
-  assert_stderr_has "no verdict line"
-  assert_no_comment
 }
 
 t_request_changes_is_reported_as_request_changes() {
@@ -667,7 +727,9 @@ TESTS=(
   t_missing_instructions
   t_empty_diff_is_refused
   t_temp_files_are_removed_when_the_run_fails
-  t_empty_reviewer_output_is_not_posted
+  t_an_empty_output_is_not_posted_as_a_review
+  t_a_no_verdict_death_posts_and_fails
+  t_the_no_verdict_notice_consumes_no_round
   t_an_unreadable_verdict_is_posted_and_then_fails
   t_request_changes_is_reported_as_request_changes
   t_approve_is_posted_with_the_guarded_flag_set
@@ -711,7 +773,8 @@ guard:empty-diff            t_empty_diff_is_refused
 guard:empty-stream          t_an_empty_stream_is_refused
 guard:no-result-event       t_a_stream_with_no_result_event_is_refused
 guard:agent-error           t_an_agent_error_is_not_posted
-guard:empty-output          t_empty_reviewer_output_is_not_posted
+guard:empty-output          t_an_empty_output_is_not_posted_as_a_review
+guard:no-verdict            t_a_no_verdict_death_posts_and_fails
 guard:verdict               t_an_unreadable_verdict_is_posted_and_then_fails
 guard:verdict-unparsed      t_an_unreadable_verdict_is_posted_and_then_fails
 guard:denials               t_a_denied_read_is_posted_and_then_fails_the_job
@@ -720,6 +783,7 @@ guard:closing-pass          t_the_closing_pass_is_verdict_only
 guard:closing-pass-once     t_after_the_closing_pass_no_further_review
 guard:skip-notice           t_a_round_limit_skip_posts_a_visible_notice
 guard:skip-uncounted        t_the_skip_notice_is_not_counted_as_a_round
+  t_the_no_verdict_notice_consumes_no_round
 verdict:request-changes     t_a_verdict_may_carry_its_reason
 capture:summary             t_the_run_summary_and_the_stream_are_kept
 capture:allowed-tools       t_the_agent_is_given_a_read_only_tool_set
@@ -803,7 +867,13 @@ mutation_for() {
     t_auth_token_outranks_the_token)             printf '/# guard:auth-token$/d' ;;
     t_missing_instructions)                      printf '/# guard:instructions$/d' ;;
     t_empty_diff_is_refused)                     printf '/# guard:empty-diff$/d' ;;
-    t_empty_reviewer_output_is_not_posted)       printf '/# guard:empty-output$/d' ;;
+    t_an_empty_output_is_not_posted_as_a_review) printf '/# guard:empty-output$/d' ;;
+    # Delete the line that posts the death notice, so the no-verdict death goes
+    # back to dying with only a runner-log line and nothing on the pull request.
+    t_a_no_verdict_death_posts_and_fails)        printf '/# guard:no-verdict$/d' ;;
+    # Swap the skip marker to the review marker, so the death notice would be
+    # counted as a round by the next push.
+    t_the_no_verdict_notice_consumes_no_round)   printf 's|^SKIP_MARKER=.*|SKIP_MARKER="<!-- gophersys-review-agent -->"|' ;;
     # Deleting a line inside an if/else would be a syntax error, so these 3
     # replace the line instead.
     t_temp_files_are_removed_when_the_run_fails) printf 's|^.*# guard:temp-lifetime$|diff_file="$(mktemp)"|' ;;
