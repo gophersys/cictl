@@ -465,8 +465,12 @@ stream_result() { # stream_result <text> <is_error> <denials-json>
 
 t_the_run_summary_and_the_stream_are_kept() {
   local sb; sb="$(new_sandbox)"
-  printf '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read"}]}}\n' > "$sb/fx/stream"
-  printf '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read"}]}}\n' >> "$sb/fx/stream"
+  # The init event is where the CLI states what a model alias resolved to.
+  {
+    printf '{"type":"system","subtype":"init","model":"claude-opus-4-5-20251101"}\n'
+    printf '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read"}]}}\n'
+    printf '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read"}]}}\n'
+  } > "$sb/fx/stream"
   stream_result 'Where: x.go:1
 What: a defect.
 
@@ -476,6 +480,9 @@ REQUEST_CHANGES' false '[]' >> "$sb/fx/stream"
   # The numbers that make a bad review diagnosable without paying for another.
   assert_stdout_has "cost      \$2.5"
   assert_stdout_has "turns     11"
+  # The RESOLVED model, not only the alias: the alias is what was asked for,
+  # and this line is the only place the run says what it got.
+  assert_stdout_has "resolved: claude-opus-4-5-20251101"
   assert_stdout_has "tools     Read x2"
   assert_comment_posted
   # The stream itself must survive the run: the workflow keeps it as an artifact.
@@ -543,6 +550,31 @@ t_the_agent_is_given_a_read_only_tool_set() {
   for t in Write Edit NotebookEdit 'Bash(gh pr comment' 'Bash(gh pr merge' 'Bash(rm' 'Bash(git push'; do
     ! grep -qF -- "$t" "$SB/calls/claude.log" || fail "a write tool reached the allowlist: $t"
   done
+}
+
+# The default model is the CLI's FAMILY ALIAS, not a pinned id: `opus` tracks
+# the newest Opus as the pinned CLI advances, so the reviewer never silently
+# ages while the organization's CLI moves. The alias is what reaches the
+# agent; what it RESOLVED to is read back from the stream (see the summary
+# test). With the stub stream carrying no resolved model, the log states the
+# alias — it never invents a resolution.
+t_the_default_model_is_the_opus_alias() {
+  local sb; sb="$(new_sandbox)"
+  run_review "$sb" ${CREDS[@]+"${CREDS[@]}"} -- 1
+  assert_rc_zero
+  grep -qE -- '(^| )--model opus( |$)' "$SB/calls/claude.log" \
+    || fail "the agent did not run with the opus family alias: $(cat "$SB/calls/claude.log")"
+  assert_stdout_has "model     opus"
+}
+
+# An explicit REVIEW_MODEL always wins over the alias default, so a pinned
+# review (a bisect, a cost cap, a regression hunt) stays possible.
+t_a_model_override_wins() {
+  local sb; sb="$(new_sandbox)"
+  run_review "$sb" ${CREDS[@]+"${CREDS[@]}"} REVIEW_MODEL=claude-opus-9-9-test -- 1
+  assert_rc_zero
+  grep -qF -- '--model claude-opus-9-9-test' "$SB/calls/claude.log" \
+    || fail "REVIEW_MODEL did not override the default: $(cat "$SB/calls/claude.log")"
 }
 
 t_an_empty_stream_is_refused() {
@@ -742,6 +774,8 @@ TESTS=(
   t_a_denied_read_is_posted_and_then_fails_the_job
   t_a_denied_bash_is_reported_but_does_not_fail_the_job
   t_the_agent_is_given_a_read_only_tool_set
+  t_the_default_model_is_the_opus_alias
+  t_a_model_override_wins
   t_an_empty_stream_is_refused
   t_the_first_run_is_round_1
   t_a_second_run_is_round_2_and_sees_the_first
@@ -787,6 +821,8 @@ guard:skip-uncounted        t_the_skip_notice_is_not_counted_as_a_round
 verdict:request-changes     t_a_verdict_may_carry_its_reason
 capture:summary             t_the_run_summary_and_the_stream_are_kept
 capture:allowed-tools       t_the_agent_is_given_a_read_only_tool_set
+capture:model               t_the_default_model_is_the_opus_alias
+  t_a_model_override_wins
 verdict:approve             t_a_verdict_inside_a_sentence_is_not_a_verdict
   t_a_verdict_may_carry_its_reason
 post:marker                 t_the_posted_review_carries_the_marker
@@ -834,6 +870,10 @@ mutation_for() {
     # Widen the read set to everything, so a denied Bash also fails the job.
     t_a_denied_bash_is_reported_but_does_not_fail_the_job) printf 's|select(.tool_name == \"Read\" or .tool_name == \"Grep\" or .tool_name == \"Glob\")|select(true)|' ;;
     t_the_agent_is_given_a_read_only_tool_set)   printf '/# capture:allowed-tools$/d' ;;
+    # Pin the default back to a model id, so the alias stops tracking Opus.
+    t_the_default_model_is_the_opus_alias)       printf 's|^MODEL=.*|MODEL="${REVIEW_MODEL:-claude-opus-4-5}"|' ;;
+    # Hardcode the model, so an explicit REVIEW_MODEL override is ignored.
+    t_a_model_override_wins)                     printf 's|^MODEL=.*|MODEL="opus"|' ;;
     t_an_empty_stream_is_refused)                printf '/# guard:empty-stream$/d' ;;
     # Narrow the pattern back to a token that must stand entirely alone.
     t_a_verdict_may_carry_its_reason)            printf 's|^RE_REQUEST_CHANGES=.*|RE_REQUEST_CHANGES="^REQUEST_CHANGES[[:space:]]*$"|' ;;

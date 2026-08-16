@@ -24,7 +24,12 @@ IFS=$'\n\t'
 
 PR="${1:-}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MODEL="${REVIEW_MODEL:-claude-opus-4-5}"
+# The default model is the CLI's FAMILY ALIAS, not a pinned id: `opus` tracks
+# the newest Opus as the pinned CLI advances, so the reviewer never silently
+# ages while the organization's CLI moves. The summary logs what the alias
+# RESOLVED to, read from the stream. An explicit REVIEW_MODEL still wins, so a
+# pinned review (a bisect, a cost cap, a regression hunt) stays possible.
+MODEL="${REVIEW_MODEL:-opus}" # capture:model
 BUDGET_USD="${REVIEW_BUDGET_USD:-25}"
 MAX_TURNS="${REVIEW_MAX_TURNS:-40}"
 # The round ceiling Mateo asked for: bounded, and configurable in 1 place.
@@ -197,6 +202,15 @@ log "  cost      \$$(jq -r '(.total_cost_usd // 0) * 100 | round / 100' <<< "$re
 log "  turns     $(jq -r '.num_turns // 0' <<< "$result") of ${MAX_TURNS}"
 log "  duration  $(jq -r '(.duration_ms // 0) / 1000 | round' <<< "$result")s"
 log "  stop      $(jq -r '.stop_reason // .terminal_reason // "n/a"' <<< "$result")"
+# What the model alias RESOLVED to. The init event is where the CLI states the
+# actual model id; without it the log states the alias and says the stream
+# artifact is the record — it never invents a resolution.
+resolved="$(jq -r 'select(.type=="system" and .subtype=="init") | .model // empty' "$STREAM_FILE" | tail -1)"
+if [ -n "$resolved" ]; then
+  log "  model     ${MODEL} (resolved: ${resolved})"
+else
+  log "  model     ${MODEL} (no resolved model in the stream; the ${STREAM_FILE} artifact is the record)"
+fi
 # Which tools it used. A shallow review almost always means it read very little,
 # and this is the line that shows it.
 log "  tools     $(jq -rs '[.[] | select(.type=="assistant") | .message.content[]? | select(.type=="tool_use") | .name] | if length == 0 then "none" else (group_by(.) | map("\(.[0]) x\(length)") | join(", ")) end' "$STREAM_FILE")"

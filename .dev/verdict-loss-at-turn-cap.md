@@ -1,6 +1,6 @@
 # verdict-loss-at-turn-cap
 
-phase:    verify
+phase:    pr
 repo:     gophersys/cictl
 branch:   fix/verdict-loss-at-turn-cap
 worktree: ~/code/.worktrees/cictl-79
@@ -58,6 +58,19 @@ errored run WITH text keeps its existing no-post behavior
      marker moves onto this die.
    - Generalize the SKIP_MARKER comment: it now footers both uncounted notices.
 
+3. Scope addition, approved by Mateo via the orchestrator (2026-08-16, same
+   pull request): default MODEL to the CLI's `opus` family alias so the
+   reviewer tracks the newest Opus as the pinned CLI advances
+   (`# capture:model`); the run summary logs what the alias RESOLVED to, read
+   from the stream's init event — and when the stream carries no resolved
+   model it states the alias and names the stream artifact as the record,
+   never inventing a resolution. Guard tests:
+   t_the_default_model_is_the_opus_alias (default is the alias; alias is
+   logged), a resolved-model assertion in
+   t_the_run_summary_and_the_stream_are_kept (init event in the fixture), and
+   t_a_model_override_wins (explicit REVIEW_MODEL still wins), each backed by
+   its own MODEL-line mutation.
+
 Ownership note: single-agent execution per the orchestrator's task instruction;
 edits are serial, so no concurrent file ownership exists to split.
 
@@ -88,6 +101,20 @@ edits are serial, so no concurrent file ownership exists to split.
   on golangci-lint findings pointing into a deleted sibling worktree
   (cictl-affected-relative-c) — stale host lint cache, surfaced not caused;
   `golangci-lint cache clean` and the rerun was green.
+- RED (model scope) — `bash review/review_test.sh` with the model tests in and
+  review.sh still on the pinned default: exit 1; "phase 1 — behaviour: 37
+  tests", exactly 2 FAIL, both for the pinned-default reason:
+  - t_the_default_model_is_the_opus_alias: "the agent did not run with the
+    opus family alias: -p --model claude-opus-4-5 --max-budget-usd 25 ..."
+  - t_the_run_summary_and_the_stream_are_kept: stdout never said
+    "resolved: claude-opus-4-5-20251101".
+  Phase 2 also proved the alias mutation was impossible pre-change: "the
+  mutation changed nothing: s|^MODEL=.*|MODEL="${REVIEW_MODEL:-claude-opus-4-5}"|".
+- GREEN (model scope) — `bash review/review_test.sh`: exit 0, "all 37 guards
+  hold, and all 37 are proven able to fail";
+  `shellcheck -S style review/review.sh review/review_test.sh` exit 0;
+  `PATH=/Users/mateo/go/bin:$PATH bash ./ctl.sh gate` rerun after the model
+  scope: exit 0 end to end.
 - Phase-4 adversarial verifier (dev-verifier): DONE-CONFIRMED. It reproduced
   baseline, red, green, gate and shellcheck; proved both new mutations are
   real counter-stimuli; probed the functional round-count proof independently
@@ -102,8 +129,5 @@ edits are serial, so no concurrent file ownership exists to split.
 
 ## Next
 
-Fold in the approved scope addition (Mateo via the orchestrator, 2026-08-16):
-default MODEL to the `opus` family alias, log the resolved model id from the
-stream, and guard-test both the alias default and the REVIEW_MODEL override.
-Then push and open the pull request. Do NOT merge: the orchestrator owns the
-merge.
+Open the pull request. Do NOT merge: the orchestrator owns the merge, and this
+state file is deleted in the last commit before it.
