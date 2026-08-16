@@ -24,7 +24,12 @@ IFS=$'\n\t'
 
 PR="${1:-}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-MODEL="${REVIEW_MODEL:-claude-opus-4-5}"
+# The default model is the CLI's FAMILY ALIAS, not a pinned id: `opus` tracks
+# the newest Opus as the pinned CLI advances, so the reviewer never silently
+# ages while the organization's CLI moves. The summary logs what the alias
+# RESOLVED to, read from the stream. An explicit REVIEW_MODEL still wins, so a
+# pinned review (a bisect, a cost cap, a regression hunt) stays possible.
+MODEL="${REVIEW_MODEL:-opus}" # capture:model
 BUDGET_USD="${REVIEW_BUDGET_USD:-25}"
 MAX_TURNS="${REVIEW_MAX_TURNS:-40}"
 # The round ceiling Mateo asked for: bounded, and configurable in 1 place.
@@ -32,11 +37,12 @@ MAX_ROUNDS="${REVIEW_MAX_ROUNDS:-4}" # guard:round-limit
 # The footer that marks a comment as this agent's. It is how a round is counted,
 # so it must be posted with every review and must never be edited by hand.
 MARKER="<!-- gophersys-review-agent -->"
-# The footer for a skip notice. It is DISTINCT from MARKER on purpose: the round
-# counter selects comments that contain MARKER, and `agent-skip -->` never holds
-# the contiguous `agent -->`, so a skip is visible to a human but never counted
-# as a review. If it carried MARKER, the next push would count this skip and the
-# ceiling would cascade.
+# The footer for an UNcounted notice: the round-limit skip, and the no-verdict
+# death. It is DISTINCT from MARKER on purpose: the round counter selects
+# comments that contain MARKER, and `agent-skip -->` never holds the contiguous
+# `agent -->`, so a notice is visible to a human but never counted as a review.
+# If it carried MARKER, the next push would count the notice and the ceiling
+# would cascade.
 SKIP_MARKER="<!-- gophersys-review-agent-skip -->" # guard:skip-uncounted
 # The full event stream. The workflow keeps it as an artifact, so it must outlive
 # the run and therefore is NOT a temp file.
@@ -196,17 +202,54 @@ log "  cost      \$$(jq -r '(.total_cost_usd // 0) * 100 | round / 100' <<< "$re
 log "  turns     $(jq -r '.num_turns // 0' <<< "$result") of ${MAX_TURNS}"
 log "  duration  $(jq -r '(.duration_ms // 0) / 1000 | round' <<< "$result")s"
 log "  stop      $(jq -r '.stop_reason // .terminal_reason // "n/a"' <<< "$result")"
+# What the model alias RESOLVED to. The init event is where the CLI states the
+# actual model id; without it the log states the alias and says the stream
+# artifact is the record — it never invents a resolution.
+resolved="$(jq -r 'select(.type=="system" and .subtype=="init") | .model // empty' "$STREAM_FILE" | tail -1)"
+if [ -n "$resolved" ]; then
+  log "  model     ${MODEL} (resolved: ${resolved})"
+else
+  log "  model     ${MODEL} (no resolved model in the stream; the ${STREAM_FILE} artifact is the record)"
+fi
 # Which tools it used. A shallow review almost always means it read very little,
 # and this is the line that shows it.
 log "  tools     $(jq -rs '[.[] | select(.type=="assistant") | .message.content[]? | select(.type=="tool_use") | .name] | if length == 0 then "none" else (group_by(.) | map("\(.[0]) x\(length)") | join(", ")) end' "$STREAM_FILE")"
-
-[ "$(jq -r '.is_error // false' <<< "$result")" != "true" ] || die "the reviewer reported an error (stop: $(jq -r '.stop_reason // .terminal_reason // "unknown"' <<< "$result")). Not posting." # guard:agent-error
 
 # `jq -r` prints a trailing newline even for an empty string, so `-s` on the file
 # would call a 1-byte empty review "present". Test the text itself, whitespace
 # stripped, and only then write it.
 text="$(jq -r '.result // ""' <<< "$result")"
-[ -n "${text//[[:space:]]/}" ] || die "the reviewer produced no output (exit ${rc}). Failing rather than posting an empty review." # guard:empty-output
+
+# THE DEATH WITH NO VERDICT LEAVES A TRACE. A run can end with no final text at
+# all: at MAX_TURNS the agent is cut off mid-tool-call (stop: tool_use) and the
+# CLI emits an ERROR-VARIANT result event — subtype error_max_turns, is_error
+# true, and NO .result field, because no error variant carries one (verified
+# against claude 2.1.229). That is why this stands BEFORE the error guard:
+# behind it, the error guard would eat every turn-cap death and the notice
+# could never be posted. A success-shaped result whose text is empty lands here
+# too. Either way the budget is spent and there is no verdict. The first version
+# died here with only a runner-log line: the pull request showed nothing and the
+# red check never said why. So the death now posts a visible notice — with
+# SKIP_MARKER, never MARKER, so it consumes no round — naming the spend, the
+# turns against the cap and the stop reason, and the remedy: re-run the check,
+# or review the push manually. Then the job still fails, because a spent budget
+# with no verdict is a failure, never a pass.
+if [ -z "${text//[[:space:]]/}" ]; then
+  cost="$(jq -r '(.total_cost_usd // 0) * 100 | round / 100' <<< "$result")"
+  turns="$(jq -r '.num_turns // 0' <<< "$result")"
+  stop="$(jq -r '.stop_reason // .terminal_reason // "n/a"' <<< "$result")"
+  {
+    printf 'This push was **not reviewed**: the review died with **no verdict**.\n\n'
+    printf 'The reviewer spent $%s of its $%s budget and stopped after %s of %s turns (stop: %s) without writing a review, so there is no review and no verdict to post.\n\n' "$cost" "$BUDGET_USD" "$turns" "$MAX_TURNS" "$stop"
+    printf 'Re-run the pr-review check, or review this push manually.\n'
+    printf '\n%s\n' "$SKIP_MARKER"
+  } > "$out_file"
+  gh pr comment "$PR" --body-file "$out_file" || die "could not post the no-verdict death notice" # guard:no-verdict
+  die "the reviewer spent \$${cost} and died with no verdict after ${turns} of ${MAX_TURNS} turns (stop: ${stop}, exit ${rc}). The notice is on the pull request; re-run the review, or review the push manually." # guard:empty-output
+fi
+
+[ "$(jq -r '.is_error // false' <<< "$result")" != "true" ] || die "the reviewer reported an error (stop: $(jq -r '.stop_reason // .terminal_reason // "unknown"' <<< "$result")). Not posting." # guard:agent-error
+
 printf '%s\n' "$text" > "$out_file"
 log "review: $(wc -c < "$out_file") bytes"
 
