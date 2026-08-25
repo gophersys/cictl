@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"io"
 	"os"
@@ -64,7 +65,9 @@ func usage(w printer) {
 Usage:
   cictl schema       [-o FILE]                  Emit the JSON Schema (draft 2020-12) from the contract structs
   cictl validate     [-f .ci/ci.contract.yaml]  Validate a contract instance (structural + semantic)
-  cictl conformance  [-C DIR]                    Assert a repo's .ci/ is canonical
+  cictl conformance  [-C DIR]                   Assert a repo's .ci/ is canonical
+  cictl conformance  --org ORG [--floor SHA]    Audit every repo of an org against the contract
+                     [--fail-on-gap]             (reports; only its own failures exit non-zero)
   cictl affected     [--base origin/main]        List changed project roots (one per line)
   cictl generate     [-C DIR]                    Render the provider workflows from the contract
   cictl drift        [-C DIR]                    Fail if the committed workflows drift from the contract
@@ -120,18 +123,70 @@ func cmdValidate(args []string, out, errOut printer) int {
 }
 
 func cmdConformance(args []string, out, errOut printer) int {
-	dir, code := repoFlag("conformance", args, errOut)
-	if code >= 0 {
-		return code
+	fs := flag.NewFlagSet("conformance", flag.ContinueOnError)
+	fs.SetOutput(errOut.w)
+	dir := fs.String("C", ".", "repository directory (per-repo mode)")
+	org := fs.String("org", "", "audit every repository of this GitHub organization instead of one directory")
+	floor := fs.String("floor", "", "the oldest cictl commit a repository may review with (--org only)")
+	failOnGap := fs.Bool("fail-on-gap", false, "exit non-zero when the fleet is out of contract (--org only)")
+	if err := fs.Parse(args); err != nil {
+		return 2
 	}
-	rep := conformance.Check(dir)
+	if *org != "" {
+		return cmdConformanceOrg(*org, *floor, *failOnGap, out, errOut)
+	}
+	rep := conformance.Check(*dir)
 	if !rep.OK() {
-		errOut.printf("cictl conformance: %s is NOT canonical\n", dir)
+		errOut.printf("cictl conformance: %s is NOT canonical\n", *dir)
 		errOut.printf("%s\n", rep.Error())
 		return 1
 	}
-	out.printf("%s/.ci is canonical\n", dir)
+	out.printf("%s/.ci is canonical\n", *dir)
 	return 0
+}
+
+// cmdConformanceOrg runs the bird's-eye audit.
+//
+// THE EXIT CODE IS THE DESIGN, NOT A DETAIL. A fleet gap prints on the board and
+// exits 0: this verb runs from `infrastructure` on a schedule, and an org-wide
+// check that failed on somebody else's drift would redden a pull request whose
+// author cannot fix the cause. Each repository's own `cictl drift` already blocks
+// its own pull requests and names the exact file.
+//
+// What DOES exit non-zero is this verb failing rather than reporting — no token,
+// an API error, a listing that will not parse. That distinction is the whole
+// point: a red here always means "the audit did not run", never "somebody else's
+// repository drifted".
+//
+// --fail-on-gap is for the ONE scheduled job that owns the fleet. It makes gaps
+// red in exactly one place, which is the loud owner the design asks for, and it
+// is off by default so that nothing else inherits it by accident.
+func cmdConformanceOrg(org, floor string, failOnGap bool, out, errOut printer) int {
+	token := firstNonEmpty(os.Getenv("GITHUB_TOKEN"), os.Getenv("GH_TOKEN"))
+	rep, err := conformance.CheckOrg(context.Background(), &conformance.OrgOptions{
+		Org:   org,
+		Token: token,
+		Floor: floor,
+	})
+	if err != nil {
+		errOut.printf("cictl conformance --org: the audit could not run: %v\n", err)
+		return 1
+	}
+	out.print(rep.Board())
+	if !rep.OK() && failOnGap {
+		errOut.printf("cictl conformance --org: %d gap(s) across %d repository(ies)\n", rep.Gaps(), len(rep.Rows))
+		return 1
+	}
+	return 0
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func cmdAffected(args []string, out, errOut printer) int {
