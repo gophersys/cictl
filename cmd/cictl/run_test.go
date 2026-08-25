@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -155,5 +156,38 @@ toolMatrix: {sources: []}
 	}
 	if code, _, _ := runArgs(t, "generate", "-C", dir); code != 1 {
 		t.Fatalf("generate on invalid contract should fail (1), got %d", code)
+	}
+}
+
+// TestRun_ConformanceOrgRefusesWithoutAToken proves the operational half of the
+// exit-code design. A red from `conformance --org` must always mean "the audit
+// did not run", never "somebody else's repository drifted" — so the one thing
+// that reliably makes it red is its own missing credential, and the message has
+// to name what to set.
+func TestRun_ConformanceOrgRefusesWithoutAToken(t *testing.T) {
+	t.Setenv("GITHUB_TOKEN", "")
+	t.Setenv("GH_TOKEN", "")
+	var out, errOut bytes.Buffer
+	if code := run([]string{"conformance", "--org", "gophersys"}, &out, &errOut); code != 1 {
+		t.Fatalf("expected exit 1 for an audit that cannot run, got %d (out=%q err=%q)", code, out.String(), errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "GITHUB_TOKEN") {
+		t.Errorf("the refusal does not name the variable to set: %q", errOut.String())
+	}
+	if !strings.Contains(errOut.String(), "could not run") {
+		t.Errorf("the refusal does not say the audit failed rather than the fleet: %q", errOut.String())
+	}
+}
+
+// TestRun_ConformanceStillTakesADirectory proves --org is additive: the per-repo
+// verb that eden and libs maintain their __verbs contract for is unchanged.
+func TestRun_ConformanceLocalModeSurvives(t *testing.T) {
+	t.Parallel()
+	var out, errOut bytes.Buffer
+	if code := run([]string{"conformance", "-C", t.TempDir()}, &out, &errOut); code != 1 {
+		t.Fatalf("a directory with no contract should be non-conformant, got %d", code)
+	}
+	if !strings.Contains(errOut.String(), "NOT canonical") {
+		t.Errorf("the per-repo verb changed shape: %q", errOut.String())
 	}
 }

@@ -1,0 +1,103 @@
+# The gophersys pull request reviewer, as a COMPOSITE ACTION.
+#
+# WHY AN ACTION AND NOT A REUSABLE WORKFLOW. The reusable workflow this replaces
+# tried to learn its own commit from `github.job_workflow_sha` so it could fetch
+# the reviewer source at that same commit. Inside a called workflow that context
+# is EMPTY — measured on gophersys/infrastructure#171, where every populated
+# context named the CALLER — so the pin could never resolve and the pin guard
+# correctly failed the run. That is ledger #46, and it is not fixable: no context
+# a called workflow can read names the called workflow.
+#
+# A composite action has no such problem BY CONSTRUCTION. Before the first step
+# runs, the runner checks this repository out at the exact ref on the caller's
+# `uses:` line, into ${{ github.action_path }}. So the source on disk IS the
+# pinned commit. There is no `git fetch`, no context variable and no pin guard,
+# because there is nothing left to verify: running `$GITHUB_ACTION_PATH/review.sh`
+# is running the commit the caller asked for. review.sh already resolves CLAUDE.md
+# beside itself, so the instructions are that same commit too.
+#
+# THE CALLER IS GENERATED. `cictl generate` renders .github/workflows/pr-review.yml
+# from the repository's `review:` block, and `cictl drift` fails any hand edit. The
+# ~10 lines a composite action costs (runs-on, concurrency, timeout-minutes and
+# permissions, none of which an action can set) are therefore free.
+#
+# NO CALLER PASSES A SECRET. `arc-review` supplies CLAUDE_CODE_OAUTH_TOKEN as pool
+# environment — that pool runs this action and nothing else — so the token has one
+# home. There is deliberately no secret input here: one would give the same token a
+# second home in every repository that reviews.
+name: gophersys pull request review
+description: Run the gophersys review agent on a pull request, at this action's pinned commit.
+
+inputs:
+  pr:
+    description: The pull request number to review.
+    required: true
+  model:
+    description: >-
+      The Claude model. Use the CLI FAMILY ALIAS (`opus` or `sonnet`), never a
+      pinned model id: the alias tracks the newest model of that family as the
+      pinned CLI advances, which is the standing policy. A pinned id is a second
+      version home that ages silently. An explicit id is still accepted for a
+      deliberately pinned review — a bisect, a regression hunt.
+    required: false
+    default: opus
+  budget-usd:
+    description: The per-round spend ceiling, in whole US dollars.
+    required: false
+    default: "25"
+  max-rounds:
+    description: >-
+      How many review rounds before the single closing pass. Worst case spend per
+      pull request is (max-rounds + 1) * budget-usd, because the closing pass is a
+      full-price round.
+    required: false
+    default: "4"
+  stream-store:
+    description: >-
+      Where the reviewer's full event stream is archived: `minio` or `none`.
+      GitHub artifact storage is deliberately not an option — it is an org-wide
+      quota, and when it filled it failed the `Keep the run` step on runs whose
+      review had already succeeded, five times over one weekend. A shared quota
+      must never decide one repository's review verdict.
+    required: false
+    default: minio
+  stream-endpoint:
+    description: The S3-compatible endpoint of the archive. Required when stream-store is minio.
+    required: false
+    default: ""
+  stream-bucket:
+    description: The bucket the streams are written to. Required when stream-store is minio.
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    # The reviewer. Every input is validated before a paid agent starts: a bad
+    # budget or an unknown model must cost nothing, not one round.
+    - name: Review
+      shell: bash
+      env:
+        REVIEW_PR: ${{ inputs.pr }}
+        REVIEW_MODEL: ${{ inputs.model }}
+        REVIEW_BUDGET_USD: ${{ inputs.budget-usd }}
+        REVIEW_MAX_ROUNDS: ${{ inputs.max-rounds }}
+        REVIEW_STREAM_FILE: ${{ runner.temp }}/review-stream.jsonl
+        REVIEW_STREAM_STORE: ${{ inputs.stream-store }}
+        GH_TOKEN: ${{ github.token }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+      run: bash "${GITHUB_ACTION_PATH}/action.sh"
+
+    # `if: always()` is the point of this step: a review that FAILED is exactly
+    # the one whose stream you need, and without it the only way to diagnose one
+    # is to pay for another run.
+    - name: Archive the review stream
+      if: always()
+      shell: bash
+      env:
+        REVIEW_STREAM_FILE: ${{ runner.temp }}/review-stream.jsonl
+        REVIEW_STREAM_STORE: ${{ inputs.stream-store }}
+        REVIEW_STREAM_ENDPOINT: ${{ inputs.stream-endpoint }}
+        REVIEW_STREAM_BUCKET: ${{ inputs.stream-bucket }}
+        REVIEW_STREAM_KEY: ${{ github.repository }}/${{ inputs.pr }}/${{ github.run_id }}-${{ github.run_attempt }}.jsonl
+      run: bash "${GITHUB_ACTION_PATH}/archive-stream.sh"

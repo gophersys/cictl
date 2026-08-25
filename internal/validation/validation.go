@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -249,7 +250,66 @@ func semantic(c *contract.Contract) []Problem {
 	p = append(p, tierProblems("/tiers/pr", &c.Tiers.Pr, false)...)
 	p = append(p, tierProblems("/tiers/merge", &c.Tiers.Merge, false)...)
 	p = append(p, tierProblems("/tiers/nightly", &c.Tiers.Nightly, true)...)
+	p = append(p, reviewProblems(&c.Review)...)
 
+	return p
+}
+
+// sha40 matches a full git commit: 40 lowercase hex characters and nothing else.
+// A tag, a branch, an abbreviated sha and an uppercase sha are all rejected. The
+// pin is the whole safety of a shared reviewer, and every one of those four is a
+// pointer that can resolve to different code on two different days.
+var sha40 = regexp.MustCompile(`^[0-9a-f]{40}$`)
+
+// reviewProblems validates the review block. A disabled block is checked for
+// nothing: it renders no workflow, so a half-filled one cannot mislead anybody.
+// An ENABLED block is checked completely, because every field of it is emitted
+// into a workflow that spends money.
+func reviewProblems(r *contract.Review) []Problem {
+	if !r.Enabled {
+		return nil
+	}
+	var p []Problem
+	if !sha40.MatchString(r.Ref) {
+		p = append(p, Problem{Where: "/review/ref", Message: fmt.Sprintf("must be a 40-hex commit, got %q; a tag or a branch is a pointer its owner can move", r.Ref)})
+	}
+	if _, ok := contract.TierPreset(r.Tier); !ok {
+		p = append(p, Problem{Where: "/review/tier", Message: fmt.Sprintf("unknown tier %q (want one of %s)", r.Tier, joinTiers(contract.ReviewTiers))})
+	}
+	if strings.TrimSpace(r.RunsOn) == "" {
+		p = append(p, Problem{Where: "/review/runsOn", Message: "must be non-empty"})
+	}
+	if r.TimeoutMinutes <= 0 {
+		p = append(p, Problem{Where: "/review/timeoutMinutes", Message: "must be a positive number of minutes; a job with no limit inherits GitHub's default of 360"})
+	}
+	p = append(p, reviewStreamProblems(r)...)
+	return p
+}
+
+// reviewStreamProblems checks the archive destination. It is its own function
+// because folding it into reviewProblems pushed that function past the
+// complexity ceiling the shared linter enforces.
+func reviewStreamProblems(r *contract.Review) []Problem {
+	var p []Problem
+	switch r.StreamStore {
+	case contract.ReviewStreamMinio:
+		// There is deliberately no default endpoint. A URL nobody verified reads
+		// as configuration and archives nothing, which is worse than an absent one.
+		if strings.TrimSpace(r.StreamEndpoint) == "" {
+			p = append(p, Problem{Where: "/review/streamEndpoint", Message: "required when streamStore is minio"})
+		}
+		if strings.TrimSpace(r.StreamBucket) == "" {
+			p = append(p, Problem{Where: "/review/streamBucket", Message: "required when streamStore is minio"})
+		}
+	case contract.ReviewStreamNone:
+		// An explicit opt-out must not carry the settings it opts out of: dead
+		// configuration reads as intent.
+		if strings.TrimSpace(r.StreamEndpoint) != "" || strings.TrimSpace(r.StreamBucket) != "" {
+			p = append(p, Problem{Where: "/review/streamStore", Message: "streamEndpoint and streamBucket must be empty when streamStore is none"})
+		}
+	default:
+		p = append(p, Problem{Where: "/review/streamStore", Message: fmt.Sprintf("unknown stream store %q (want one of %s)", r.StreamStore, joinStreamStores(contract.ReviewStreamStores))})
+	}
 	return p
 }
 
@@ -313,6 +373,22 @@ func joinImages(is []contract.Image) string {
 	parts := make([]string, len(is))
 	for i, im := range is {
 		parts[i] = string(im)
+	}
+	return strings.Join(parts, ", ")
+}
+
+func joinTiers(tiers []contract.ReviewTier) string {
+	parts := make([]string, len(tiers))
+	for i, t := range tiers {
+		parts[i] = string(t)
+	}
+	return strings.Join(parts, ", ")
+}
+
+func joinStreamStores(ss []contract.ReviewStreamStore) string {
+	parts := make([]string, len(ss))
+	for i, s := range ss {
+		parts[i] = string(s)
 	}
 	return strings.Join(parts, ", ")
 }

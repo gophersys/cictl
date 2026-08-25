@@ -42,6 +42,10 @@ type Contract struct {
 	Languages []Language `json:"languages" yaml:"languages" jsonschema:"minItems=1,uniqueItems=true"`
 	// Tiers maps the three CI tiers to their verb/substrate definitions.
 	Tiers Tiers `json:"tiers" yaml:"tiers"`
+	// Review declares whether this repo runs the pull request review agent, and
+	// at which cictl commit. An absent block means the repo has no reviewer, which
+	// is the state every repo was in before this field existed.
+	Review Review `json:"review,omitempty" yaml:"review,omitempty"`
 	// Providers lists the CI systems the workflows are generated for.
 	Providers []Provider `json:"providers" yaml:"providers" jsonschema:"minItems=1,uniqueItems=true"`
 	// ToolMatrix declares where pinned tool versions are read from.
@@ -182,6 +186,146 @@ type Tier struct {
 	Schedule string `json:"schedule,omitempty" yaml:"schedule,omitempty" jsonschema:"description=Cron expression (nightly tier only)"`
 	// TimeoutMinutes caps the job runtime.
 	TimeoutMinutes int `json:"timeoutMinutes,omitempty" yaml:"timeoutMinutes,omitempty" jsonschema:"minimum=1,description=Job timeout in minutes"`
+}
+
+// Review declares the pull request review agent for one repository. It is the
+// contract half of the composite action at gophersys/cictl/review: the generator
+// turns this block into .github/workflows/pr-review.yml, and `cictl drift` fails
+// any hand edit of the result.
+//
+// WHY A COMMIT AND NOT A VERSION. The reusable workflow this replaces read
+// `github.job_workflow_sha` to learn its own commit, and that context is EMPTY
+// inside a called workflow (measured on gophersys/infrastructure#171), so the pin
+// could not resolve and the guard correctly failed every run. A composite action
+// has no such problem by construction: the runner checks the action repository
+// out at the exact `uses:` ref before the first step runs, so the source on disk
+// IS the pinned commit. There is no fetch, no context variable and no pin guard,
+// because there is nothing left to verify.
+//
+// Ref is a 40-hex commit and never a tag. A tag is a pointer its owner can move;
+// cictl moved 23 commits in one evening, and no review from that period can be
+// reproduced from a tag. Release names that commit for a human reader, and
+// `cictl conformance --org` asserts the two agree, so the comment cannot lie.
+type Review struct {
+	// Enabled turns the reviewer on for this repository. False (the default)
+	// renders no pr-review.yml at all.
+	Enabled bool `json:"enabled" yaml:"enabled" jsonschema:"description=Run the pull request review agent in this repository"`
+	// Ref is the cictl commit this repository reviews with: a 40-hex SHA, emitted
+	// verbatim on the action's `uses:` line. A repository may sit on an older ref
+	// deliberately; nothing bumps a caller for it.
+	Ref string `json:"ref,omitempty" yaml:"ref,omitempty" jsonschema:"description=The 40-hex cictl commit the reviewer runs at"`
+	// Release is the human-readable name of Ref (e.g. "v0.6.0"), emitted as a
+	// trailing comment. It is decoration for a reader and is never the pin.
+	Release string `json:"release,omitempty" yaml:"release,omitempty" jsonschema:"description=Release name of Ref, emitted as a trailing comment"`
+	// Tier selects the spend preset. It is the repository's governance type, not a
+	// free choice: the model, budget and round ceiling are derived from it in one
+	// place (TierPreset) so a change to a preset reaches every repository of that
+	// type without editing a single contract.
+	Tier ReviewTier `json:"tier,omitempty" yaml:"tier,omitempty"`
+	// RunsOn is the pool the review job runs on. It is a free string for the same
+	// reason Runner.RunsOn is.
+	RunsOn string `json:"runsOn,omitempty" yaml:"runsOn,omitempty" jsonschema:"description=The runs-on pool for the review job"`
+	// TimeoutMinutes caps the review job. It counts EXECUTION only: the worst wait
+	// measured on arc-review was 4353s of queue followed by 64s of execution, and
+	// that run reported success. No value of this key would have shown it.
+	TimeoutMinutes int `json:"timeoutMinutes,omitempty" yaml:"timeoutMinutes,omitempty" jsonschema:"minimum=1,description=Review job timeout in minutes"`
+	// StreamStore is where the reviewer's full event stream is archived.
+	StreamStore ReviewStreamStore `json:"streamStore,omitempty" yaml:"streamStore,omitempty"`
+	// StreamEndpoint is the S3-compatible endpoint of the object store. Required
+	// when StreamStore is minio; there is deliberately no default, because a
+	// default nobody verified is a URL that reads as configuration and archives
+	// nothing.
+	StreamEndpoint string `json:"streamEndpoint,omitempty" yaml:"streamEndpoint,omitempty" jsonschema:"description=S3-compatible endpoint for the review stream archive"`
+	// StreamBucket is the bucket the streams land in.
+	StreamBucket string `json:"streamBucket,omitempty" yaml:"streamBucket,omitempty" jsonschema:"description=Bucket the review streams are written to"`
+}
+
+// ReviewTier is the repository's governance type, which selects the spend preset.
+type ReviewTier string
+
+// The repository governance types, as assigned in the gophersys repo-governance
+// rule. They are the tier axis on purpose: a repository already has exactly one
+// type, so no second classification has to be invented or kept in step.
+const (
+	ReviewTierPlatform ReviewTier = "platform"
+	ReviewTierModule   ReviewTier = "module"
+	ReviewTierResearch ReviewTier = "research"
+	ReviewTierTooling  ReviewTier = "tooling"
+)
+
+// ReviewTiers is the closed set of review tiers, in declaration order.
+var ReviewTiers = []ReviewTier{ReviewTierPlatform, ReviewTierModule, ReviewTierResearch, ReviewTierTooling}
+
+// JSONSchema contributes the review-tier enum to the emitted schema.
+func (ReviewTier) JSONSchema() *SchemaEnum {
+	return enumSchema("Repository governance type; selects the review spend preset", ReviewTiers)
+}
+
+// ReviewStreamStore is where the reviewer's event stream is archived.
+type ReviewStreamStore string
+
+// The stream destinations.
+//
+// GitHub artifact storage is deliberately NOT one of them. It is an org-wide
+// quota, and when it filled, the `Keep the run` step failed on runs whose Review
+// step had already succeeded — measured on .devcontainer run 32868094840 and
+// infrastructure run 32763725563, both 2026-08-24/25. A shared quota must never
+// decide one repository's review verdict.
+const (
+	// ReviewStreamMinio writes the stream to the homelab MinIO over S3.
+	ReviewStreamMinio ReviewStreamStore = "minio"
+	// ReviewStreamNone keeps no stream. It is an explicit, visible opt-out in the
+	// generated caller, never a silent skip.
+	ReviewStreamNone ReviewStreamStore = "none"
+)
+
+// ReviewStreamStores is the closed set of stream destinations, in declaration order.
+var ReviewStreamStores = []ReviewStreamStore{ReviewStreamMinio, ReviewStreamNone}
+
+// JSONSchema contributes the stream-store enum to the emitted schema.
+func (ReviewStreamStore) JSONSchema() *SchemaEnum {
+	return enumSchema("Where the reviewer's event stream is archived", ReviewStreamStores)
+}
+
+// ReviewPreset is the resolved spend envelope for one tier: what the generator
+// writes onto the action's `with:` block.
+type ReviewPreset struct {
+	// Model is the CLI's family alias, never a pinned model id. `opus` and
+	// `sonnet` track the newest model of each family as the pinned CLI advances,
+	// which is the standing policy (always latest Sonnet/Opus, 2026-08-25). A
+	// pinned id would be a second version home that ages silently — the exact
+	// defect the SHA pin above exists to remove — and review.sh already logs the
+	// id the alias RESOLVED to, read from the agent's own init event, so the run
+	// record still names the model that answered.
+	Model string
+	// BudgetUsd is the per-round ceiling handed to `claude --max-budget-usd`.
+	BudgetUsd int
+	// MaxRounds is the review round ceiling before the single closing pass.
+	MaxRounds int
+}
+
+// The two presets. Worst case per pull request is (MaxRounds + 1) * BudgetUsd,
+// because the closing pass is a full-price round: $125 deep, $30 light.
+var (
+	// reviewPresetDeep serves the repositories that RUN things, where the defect a
+	// test cannot see is most expensive.
+	reviewPresetDeep = ReviewPreset{Model: "opus", BudgetUsd: 25, MaxRounds: 4}
+	// reviewPresetLight serves exploration and tooling.
+	reviewPresetLight = ReviewPreset{Model: "sonnet", BudgetUsd: 10, MaxRounds: 2}
+)
+
+// TierPreset returns the spend envelope for a tier, and reports whether the tier
+// is known. It is the ONE home of the preset table: changing what `platform`
+// costs is one edit here and a regeneration, never an edit of four contracts.
+func TierPreset(t ReviewTier) (ReviewPreset, bool) {
+	switch t {
+	case ReviewTierPlatform, ReviewTierModule:
+		return reviewPresetDeep, true
+	case ReviewTierResearch, ReviewTierTooling:
+		return reviewPresetLight, true
+	default:
+		return ReviewPreset{}, false
+	}
 }
 
 // ToolMatrix declares where pinned tool versions are read from. The updatability

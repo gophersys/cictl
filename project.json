@@ -19,9 +19,9 @@
       "options": { "command": "bash ./ctl.sh test-review", "cwd": "{projectRoot}" },
       "cache": false
     },
-    "test-workflow": {
+    "test-action": {
       "executor": "nx:run-commands",
-      "options": { "command": "bash ./ctl.sh test-workflow", "cwd": "{projectRoot}" },
+      "options": { "command": "bash ./ctl.sh test-action", "cwd": "{projectRoot}" },
       "cache": false
     },
     "fmt": {

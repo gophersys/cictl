@@ -51,7 +51,7 @@ function cmd_test() {
   log_info "test: go test -race ./..."
   (cd "$PROJECT_ROOT" && GOWORK=off go test -race ./...)
   cmd_test_review
-  cmd_test_workflow
+  cmd_test_action
   log_success "test: OK"
 }
 
@@ -67,15 +67,16 @@ function cmd_test_review() {
   log_success "test-review: OK"
 }
 
-# cmd_test_workflow — the same 2 phases for .github/workflows/pr-review.yml, the
-# reusable workflow that every other repository calls. Its assertions read the
-# file, the paths it points into and what actionlint says about it; each one is
-# then re-run against a copy with 1 counter-stimulus applied and must fail.
-function cmd_test_workflow() {
-  require_cmd bash actionlint awk diff find sort
-  log_info "test-workflow: review/workflow_test.sh (the one home, then discrimination)"
-  (cd "$PROJECT_ROOT" && bash review/workflow_test.sh)
-  log_success "test-workflow: OK"
+# cmd_test_action — the same 3 phases for review/action.yml, the COMPOSITE ACTION
+# every other repository calls. Its assertions read the action, the scripts it
+# dispatches to, the repository those scripts point into, and the caller the real
+# generator emits; each one is then re-run against a copy with 1 counter-stimulus
+# applied and must fail.
+function cmd_test_action() {
+  require_cmd bash actionlint go awk diff find sort
+  log_info "test-action: review/action_test.sh (the one home, then discrimination)"
+  (cd "$PROJECT_ROOT" && bash review/action_test.sh)
+  log_success "test-action: OK"
 }
 
 function cmd_fmt() {
@@ -118,12 +119,17 @@ function cmd_lint() {
   (cd "$PROJECT_ROOT" && find . -name '*.sh' -not -path './.git/*' -print0 \
      | xargs -0 shellcheck)
 
-  # This repo also ships the reusable pr-review workflow that every other
-  # repository calls, so a defect in it reaches all of them at once. actionlint
-  # is the only linter here that reports a duplicate key: neither yq nor a YAML
-  # library does, both keep the last one silently, and a duplicated
+  # actionlint is the only linter here that reports a duplicate key: neither yq
+  # nor a YAML library does, both keep the last one silently, and a duplicated
   # `timeout-minutes` produced startup failures that attached NO check to the
   # pull request in 3 repositories.
+  #
+  # This repository's OWN workflows are small — the reusable pr-review workflow
+  # that every other repository used to call is retired, replaced by the composite
+  # action at review/. What every repository now runs is the GENERATED caller, and
+  # that is linted where it is produced: review/action_test.sh renders it with the
+  # real generator and runs actionlint over the output. So this pass covers cictl,
+  # and that suite covers the fleet.
   log_info "lint: actionlint (.github/workflows)"
   local wf_count
   wf_count="$(cd "$PROJECT_ROOT" && find .github/workflows -type f \( -name '*.yml' -o -name '*.yaml' \) | wc -l | tr -d ' ')"
@@ -132,10 +138,21 @@ function cmd_lint() {
     exit 1
   fi
   log_info "lint: ${wf_count} workflow file(s)"
-  # -config-file is named rather than discovered: actionlint finds the config from
+  # The config is NAMED rather than discovered, because actionlint finds it from
   # the project root and finds the root from .git, which is a FILE in a worktree.
+  # It is also OPTIONAL: a config exists to hold exceptions, and this repository
+  # has none left. The two it carried both died with the reusable workflow — the
+  # `arc-review` label, which no cictl workflow names now (this repository is
+  # PUBLIC and arc-review refuses a public repository), and the ignore for
+  # `github.job_workflow_sha`, a property actionlint reported as undefined and
+  # which the composite action needs no part of. An ignore that outlives its
+  # reason is how a linter stops finding anything.
+  local al_config=()
+  if [[ -f "$PROJECT_ROOT/.github/actionlint.yaml" ]]; then
+    al_config=(-config-file .github/actionlint.yaml)
+  fi
   (cd "$PROJECT_ROOT" && find .github/workflows -type f \( -name '*.yml' -o -name '*.yaml' \) -print0 \
-     | xargs -0 actionlint -oneline -config-file .github/actionlint.yaml)
+     | xargs -0 actionlint -oneline ${al_config[@]+"${al_config[@]}"})
 
   log_info "lint: go vet ./..."
   (cd "$PROJECT_ROOT" && GOWORK=off go vet ./...)
@@ -174,7 +191,7 @@ Commands:
   build          Compile cictl (go build ./...)
   test           The full suite: go test -race ./... then both review suites
   test-review    Only the review/review.sh guard suite (behaviour + mutation)
-  test-workflow  Only the pr-review workflow suite (behaviour + discrimination)
+  test-action    Only the review composite-action suite (behaviour + discrimination)
   fmt            Format the source (gofumpt -w .)
   vet            go vet ./...
   lint           gofumpt check + go vet + golangci-lint + shellcheck + actionlint
@@ -192,7 +209,7 @@ function main() {
     build)         cmd_build         "$@" ;;
     test)          cmd_test          "$@" ;;
     test-review)   cmd_test_review   "$@" ;;
-    test-workflow) cmd_test_workflow "$@" ;;
+    test-action)   cmd_test_action   "$@" ;;
     fmt)           cmd_fmt           "$@" ;;
     vet)           cmd_vet           "$@" ;;
     lint)          cmd_lint          "$@" ;;

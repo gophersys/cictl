@@ -48,6 +48,16 @@ tiers:
   pr:      { verbs: [affected-gate-fast], substrate: [], timeoutMinutes: 15 }
   merge:   { verbs: [affected-gate-substrate], substrate: [docker, k3d], privileged: true, timeoutMinutes: 30 }
   nightly: { verbs: [gate-all, updatability], substrate: [docker], privileged: true, schedule: "0 6 * * *", timeoutMinutes: 90 }
+review:
+  enabled: true
+  ref: 0123456789abcdef0123456789abcdef01234567   # the cictl commit this repo reviews with
+  release: v0.6.0                                 # names that commit for a human reader
+  tier: module                                    # platform | module | research | tooling
+  runsOn: arc-review
+  timeoutMinutes: 30
+  streamStore: minio
+  streamEndpoint: https://minio.example.invalid
+  streamBucket: review-streams
 providers: [github]
 toolMatrix:
   sources: ["**/go.mod"]
@@ -83,6 +93,7 @@ the image is the image of the pod, the kubelet pulls it one time per node.
 | `schema` | Emits the JSON Schema of the contract. |
 | `validate` | Does a structural check and a semantic check of `.ci/ci.contract.yaml`. |
 | `conformance` | Asserts that `.ci/ctl.sh` really implements every verb that the contract names. |
+| `conformance --org` | The bird's-eye audit: reads every repository of a GitHub organization and reports the fleet against the contract. |
 | `generate` | Writes the provider workflows. |
 | `drift` | Renders the workflows again in memory and fails on any hand edit. **This command is the gate.** |
 | `affected` | Lists the project roots that changed after a base ref. |
@@ -96,126 +107,145 @@ deliberate and it is the only exception.
 
 ## The review agent
 
-`review/review.sh` runs the pull request review agent. It starts a paid agent
-and it writes to a pull request. Its value is in what it refuses to do.
+`review/` is the pull request review agent, and it is the ONE home of it for
+every gophersys repository. It has 3 parts:
 
-`review/review_test.sh` proves the refusals. The suite runs in 2 phases.
+| File | What it is |
+| --- | --- |
+| `review/action.yml` | the composite action every repository calls |
+| `review/action.sh` | the preflight: it validates every input, then runs the reviewer |
+| `review/review.sh` | the reviewer itself: it reads the diff, runs the agent, posts the result |
+| `review/archive-stream.sh` | it writes the full event stream to an object store |
+| `review/CLAUDE.md` | the reviewer's instructions, read beside `review.sh` |
 
-1. **Behaviour.** Each test runs against the real `review.sh`. All must pass.
-2. **Mutation.** For each test, the suite deletes the 1 line that holds the guard
-   which that test covers. The same test must then fail. A test that still
-   passes proves nothing, thus the suite exits non-zero.
+### Why a composite action, and not a reusable workflow
 
-Each guard in `review.sh` is 1 line and ends with a `# guard:<name>` marker.
-Keep each guard on 1 line, because the mutation phase removes the whole line. If
-you delete a marker, the mutation phase stops with an error. It does not skip.
+`.github/workflows/pr-review.yml` used to be a reusable workflow that other
+repositories called. **It is retired, and it is deleted.** Its safety rested on
+`github.job_workflow_sha` — the context a called workflow uses to learn its own
+commit, so it can fetch the reviewer source at that same commit. That context is
+**empty** inside a called workflow. It was measured on
+`gophersys/infrastructure#171`: every populated context named the CALLER. So the
+pin could never resolve, the pin guard correctly failed, and no repository could
+adopt it. That is ledger #46, and it is not fixable — no context a called
+workflow can read names the called workflow.
 
-The suite makes no network call and it spends no money. It replaces `PATH` with
-a sandbox directory. The sandbox holds a stub `claude`, a stub `gh` and the
-small set of coreutils that `review.sh` needs. The real `claude` and the real
-`gh` are unreachable. The runs also use `env -i`, thus a real token or a real API
-key on the machine cannot rescue a test and cannot break one.
+A composite action has no such problem by construction. **Before the first step
+runs, the runner checks this repository out at the exact ref on the caller's
+`uses:` line, into `${{ github.action_path }}`.** The source on disk IS the
+pinned commit, so there is no `git fetch`, no context variable and no pin guard —
+there is nothing left to verify. `review/action_test.sh` asserts the property
+that replaces the old pin test: **nothing under `review/` fetches its own
+source**, because the moment it does, the caller's ref stops being the pin.
 
-## The review workflow has one home
+Both mechanisms are never present at once. A test fails if
+`.github/workflows/pr-review.yml` comes back, or if any workflow here declares
+`workflow_call`.
 
-`.github/workflows/pr-review.yml` in **this** repository is the one review job
-that a `gophersys` repository calls instead of holding a copy of. It was a
-106-line file copied byte for byte into 2 of them, so a fix to the reviewer
-landed in some and not in others. It is now a reusable workflow, and a
-repository calls it:
+### The caller is generated, not copied
 
-> **DO NOT ADOPT THIS YET. The pin does not resolve, and it is measured.**
-> The stub below is correct in intent and its pin mechanism does not work. Read
-> the note under it before you copy anything.
+A repository does not hand-write its caller. It declares a `review:` block, and
+`cictl generate` emits `.github/workflows/pr-review.yml` beside `on-pr.yml`,
+`on-push.yml` and `nightly.yml`. `cictl drift` fails any hand edit.
 
-```yaml
-# .github/workflows/pr-review.yml — copy this, and nothing else.
-name: pr-review
-on:
-  pull_request:
-    types: [opened, synchronize, reopened]
+This is the part that ends drift. Three hand-kept copies of the review job had
+already diverged, because a human maintained them: a fix to one reached some
+repositories and not others. After this, a copy that diverges fails that
+repository's own pull request.
 
-jobs:
-  review:
-    # The token the review is posted with. A called workflow cannot raise what
-    # the caller granted, so this grant has to be here.
-    permissions:
-      contents: read
-      pull-requests: write
-    uses: gophersys/cictl/.github/workflows/pr-review.yml@v0.4.0
-```
+### The tier decides the spend
 
-> **DO NOT ADOPT THIS YET. The pin does not resolve, and it is measured.**
->
-> The intent below is correct and the mechanism is not. On the first real run
-> (`gophersys/infrastructure#171`) `${{ github.job_workflow_sha }}` was **empty**,
-> so the job could not learn its own commit. A probe then read the whole
-> candidate set inside a called workflow:
->
-> ```
-> job_workflow_sha = []                          EMPTY
-> job_workflow_ref = []                          EMPTY
-> workflow_sha     = [86d6f8f...]                the CALLER's commit
-> workflow_ref     = [<caller>/.github/workflows/pr-review.yml@refs/pull/171/merge]
-> sha              = [86d6f8f...]                the CALLER's commit
-> repository       = [<caller>]                  the CALLER's repo
-> ```
->
-> **Inside a called workflow there is no context variable that names the reusable
-> workflow's own commit.** Every one that is populated names the caller.
->
-> The `# guard:pin` line did its job: an empty value made `git fetch origin ""`
-> take the default branch, and the guard failed the run loudly instead of
-> reviewing against a commit nobody chose.
->
-> The replacement mechanism is an open decision. Until it lands, a repository
-> keeps the reviewer it has.
+The contract declares a **tier**, never a budget. The tier is the repository's
+governance type, and the spend preset is derived from it in one place:
 
-The tag on the `uses:` line is meant to be the **only** pin: it resolves to a
-commit, the review job fetches its own source at that same commit, and it asserts
-that the checkout it got is that commit — so the workflow that runs and the
-reviewer that runs are one commit, with no second version string to keep in step.
+| Tier | Model | Budget | Rounds | Worst case per pull request |
+| --- | --- | --- | --- | --- |
+| `platform`, `module` | `opus` | $25 | 4 | $125 |
+| `research`, `tooling` | `sonnet` | $10 | 2 | $30 |
 
-That property is the reason for this design, and it is worth keeping. What the
-measurement above rules out is only the WAY the job learns the commit.
+Worst case is `(rounds + 1) x budget`, because the closing pass is a full-price
+round. Changing what `platform` costs is one edit to `TierPreset` and a
+regeneration — never an edit of four contracts.
 
-**`v0.4.0` is the first tag that carries this workflow, and it is the earliest one
-a caller may name.** Every tag before it fails:
+`model` is the CLI's **family alias**, deliberately not a pinned model id.
+`opus` and `sonnet` track the newest model of each family as the pinned CLI
+advances (today `claude-opus-5` and `claude-sonnet-5`), which is the standing
+policy: always the latest Sonnet and Opus. A pinned id would be a second version
+home that ages silently — the exact defect the SHA pin above exists to remove —
+and `review.sh` logs the id the alias RESOLVED to, read from the agent's own
+init event, so the run record still names the model that answered.
 
-```
-git cat-file -e v0.4.0:.github/workflows/pr-review.yml    rc=0   carries it
-git cat-file -e v0.3.0:.github/workflows/pr-review.yml    rc=1   absent
-... and the same for v0.2.1, v0.2.0 and v0.1.0
-```
+### The event stream does not go to GitHub artifact storage
 
-A caller that names an earlier tag fails at run time with
-`workflow was not found`, and **no local check sees it first**: actionlint accepts
-any ref, because it does not resolve one. So verify the tag yourself before you
-pin it:
+`actions/upload-artifact` writes into one quota for the whole organization. When
+it filled, `Failed to CreateArtifact: Artifact storage quota has been hit` failed
+the keep-the-run step on runs whose Review step had **succeeded** — measured on
+`.devcontainer` run `32868094840` and `infrastructure` run `32763725563`, five
+times across one weekend, once on a review that had APPROVED.
 
-```
-git ls-remote --tags https://github.com/gophersys/cictl
-```
+A shared quota must never decide one repository's review verdict. The stream is
+written to the homelab MinIO over S3 instead (`streamStore: minio`), with the
+credentials supplied by the pool exactly as the Claude token is. `streamStore:
+none` is the explicit, visible opt-out; an unknown value is refused rather than
+treated as `none`, so a typo cannot silently turn archiving off.
 
-A repository may sit on an older tag on purpose. The pin is per repository and
-nothing forces them to move together — that is the point of putting the version
-on the `uses:` line rather than in a second version string inside the job.
+The archive step may fail the job, and that is deliberate. The review comment is
+already posted by then, so the pull request carries its verdict either way; what
+is at stake is the RECORD, and without the stream, diagnosing a wrong review
+means paying for another run. The message says plainly that the review itself
+completed, so nobody reads that red as a verdict.
 
-A repository may then sit on an older tag deliberately. Nothing here updates a
-caller, and a caller that is 3 tags behind keeps reviewing with the reviewer it
-names. Raise the tag when you want the newer one.
+### The bird's-eye view
 
-`arc-review` is a self-hosted pool in the Default runner group, which sets
-`allows_public_repositories: false`. A **public** repository that calls this
-workflow queues forever with no error and no message, so a caller belongs only in
-a private one.
+`cictl conformance --org gophersys` reads every repository of the organization
+through the GitHub API and reports the fleet against the contract: the caller is
+present, it is exactly what the generator produces (which is what makes the tier
+correct), every action is pinned to a 40-hex commit, every job declares a
+timeout exactly once, and every job runs on an `arc-*` pool.
+
+Three of those rules exist today in exactly one repository's private test suite.
+A rule that has to be repeated in ten repositories is not a rule; this verb is
+where they stop being repeated.
+
+**It reports. It does not block another repository's merge.** An org-wide
+required check reddens a pull request that cannot fix the cause. So a fleet gap
+lands on the board and the process exits 0; only an OPERATIONAL failure — no
+token, an API error — exits non-zero, because that is the verb failing rather
+than reporting. The one scheduled job that owns the fleet passes
+`--fail-on-gap` to turn gaps into its own red, in one loud place.
+
+### Every guard is proven
+
+`review/review_test.sh` and `review/action_test.sh` prove the refusals. Each
+suite runs in phases:
+
+1. **Behaviour.** Each test runs against the real tree. All must pass.
+2. **Control** (`action_test.sh`). The same tests against an unmutated copy must
+   reach the same verdicts. A test that answers differently on a copy was decided
+   by the copy, and the next phase would prove nothing.
+3. **Mutation / discrimination.** For each test, a counter-stimulus is applied to
+   a copy — a guard deleted, a guard defanged, a fetch reintroduced, the retired
+   workflow resurrected — and the same test must then FAIL. A test that still
+   passes proves nothing, so the suite exits non-zero.
+
+Each guard is 1 line and ends with a `# guard:<name>` marker. Keep each guard on
+1 line, because the mutation phase removes the whole line. A marker no test
+claims stops the suite with an error. It does not skip.
+
+`review_test.sh` makes no network call and spends no money: it replaces `PATH`
+with a sandbox holding a stub `claude`, a stub `gh` and the small set of
+coreutils that `review.sh` needs, and runs under `env -i`, so a real token on the
+machine cannot rescue a test or break one. `action_test.sh` runs no action —
+GitHub runs actions — but it does run the REAL generator and lints its output
+with `actionlint`, which is the only linter that reports a duplicate workflow
+key.
 
 ## Development
 
 ```sh
 bash ./ctl.sh test           # go test -race ./... and both review suites
 bash ./ctl.sh test-review    # only the review/review.sh guard suite
-bash ./ctl.sh test-workflow  # only the pr-review workflow suite
+bash ./ctl.sh test-action    # only the review composite-action suite
 bash ./ctl.sh gate           # build + lint + test
 ```
 
