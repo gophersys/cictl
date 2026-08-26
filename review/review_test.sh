@@ -333,7 +333,13 @@ t_an_empty_output_is_not_posted_as_a_review() {
 t_a_no_verdict_death_posts_and_fails() {
   local sb; sb="$(new_sandbox)"
   jq -n '{type:"result",subtype:"error_max_turns",is_error:true,total_cost_usd:18.73,num_turns:40,duration_ms:600000,stop_reason:"tool_use",permission_denials:[]}' > "$sb/fx/stream"
-  run_review "$sb" ${CREDS[@]+"${CREDS[@]}"} -- 1
+  # The cap is PINNED here rather than inherited from the default. This test is
+  # about the notice naming the turns AGAINST the cap, not about what the
+  # default happens to be, and while it read the default it broke the moment
+  # the default moved off 40. The default is pinned by
+  # t_the_default_turn_cap_is_500 instead, which is the one place that should
+  # fail when someone changes it.
+  run_review "$sb" ${CREDS[@]+"${CREDS[@]}"} REVIEW_MAX_TURNS=40 -- 1
   # (b) the check is RED: a spent budget with no verdict is a failure.
   assert_rc_nonzero
   assert_stderr_has "died with no verdict"
@@ -577,6 +583,31 @@ t_a_model_override_wins() {
     || fail "REVIEW_MODEL did not override the default: $(cat "$SB/calls/claude.log")"
 }
 
+# The turn cap is asserted on the ARGV the CLI was actually given, not on the
+# text of the assignment: what matters is the number the reviewer really runs
+# under. At 40 the reviewer was cut off mid-tool-call on real pull requests and
+# the run died with NO VERDICT — the budget spent, nothing posted as a review.
+# --max-budget-usd is the ceiling that is meant to bind; the turn cap exists
+# only to stop a runaway loop, so it sits far above any healthy review. This is
+# the 1 test that should fail when someone lowers the default back.
+t_the_default_turn_cap_is_500() {
+  local sb; sb="$(new_sandbox)"
+  run_review "$sb" ${CREDS[@]+"${CREDS[@]}"} -- 1
+  assert_rc_zero
+  grep -qE -- '(^| )--max-turns 500( |$)' "$SB/calls/claude.log" \
+    || fail "the agent did not run with the 500-turn default: $(cat "$SB/calls/claude.log")"
+}
+
+# REVIEW_MAX_TURNS stays the override, so a deliberately short run — a bisect, a
+# cost probe, a smoke test of the no-verdict path — is still possible.
+t_a_turn_cap_override_wins() {
+  local sb; sb="$(new_sandbox)"
+  run_review "$sb" ${CREDS[@]+"${CREDS[@]}"} REVIEW_MAX_TURNS=7 -- 1
+  assert_rc_zero
+  grep -qE -- '(^| )--max-turns 7( |$)' "$SB/calls/claude.log" \
+    || fail "REVIEW_MAX_TURNS did not override the default: $(cat "$SB/calls/claude.log")"
+}
+
 t_an_empty_stream_is_refused() {
   local sb; sb="$(new_sandbox)"
   : > "$sb/fx/stream"
@@ -776,6 +807,8 @@ TESTS=(
   t_the_agent_is_given_a_read_only_tool_set
   t_the_default_model_is_the_opus_alias
   t_a_model_override_wins
+  t_the_default_turn_cap_is_500
+  t_a_turn_cap_override_wins
   t_an_empty_stream_is_refused
   t_the_first_run_is_round_1
   t_a_second_run_is_round_2_and_sees_the_first
@@ -823,6 +856,8 @@ capture:summary             t_the_run_summary_and_the_stream_are_kept
 capture:allowed-tools       t_the_agent_is_given_a_read_only_tool_set
 capture:model               t_the_default_model_is_the_opus_alias
   t_a_model_override_wins
+capture:max-turns           t_the_default_turn_cap_is_500
+  t_a_turn_cap_override_wins
 verdict:approve             t_a_verdict_inside_a_sentence_is_not_a_verdict
   t_a_verdict_may_carry_its_reason
 post:marker                 t_the_posted_review_carries_the_marker
@@ -874,6 +909,10 @@ mutation_for() {
     t_the_default_model_is_the_opus_alias)       printf 's|^MODEL=.*|MODEL="${REVIEW_MODEL:-claude-opus-4-5}"|' ;;
     # Hardcode the model, so an explicit REVIEW_MODEL override is ignored.
     t_a_model_override_wins)                     printf 's|^MODEL=.*|MODEL="opus"|' ;;
+    # Lower the default back to the cap that killed reviews mid-tool-call.
+    t_the_default_turn_cap_is_500)               printf 's|^MAX_TURNS=.*|MAX_TURNS="${REVIEW_MAX_TURNS:-40}"|' ;;
+    # Hardcode the cap, so an explicit REVIEW_MAX_TURNS override is ignored.
+    t_a_turn_cap_override_wins)                  printf 's|^MAX_TURNS=.*|MAX_TURNS=500|' ;;
     t_an_empty_stream_is_refused)                printf '/# guard:empty-stream$/d' ;;
     # Narrow the pattern back to a token that must stand entirely alone.
     t_a_verdict_may_carry_its_reason)            printf 's|^RE_REQUEST_CHANGES=.*|RE_REQUEST_CHANGES="^REQUEST_CHANGES[[:space:]]*$"|' ;;

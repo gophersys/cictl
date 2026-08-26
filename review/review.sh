@@ -31,7 +31,15 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # pinned review (a bisect, a cost cap, a regression hunt) stays possible.
 MODEL="${REVIEW_MODEL:-opus}" # capture:model
 BUDGET_USD="${REVIEW_BUDGET_USD:-25}"
-MAX_TURNS="${REVIEW_MAX_TURNS:-40}"
+# THE BUDGET IS THE LIMITER, NOT THE TURN COUNT. At 40 the reviewer was cut off
+# MID-TOOL-CALL on real pull requests and the run died with NO VERDICT: the
+# budget was spent, nothing was posted as a review, and the only thing standing
+# between that and a silent pass is the no-verdict guard below. A cap that is
+# reached in normal operation is not a safety net, it is a defect generator, so
+# the default is raised to a ceiling a healthy review never approaches and
+# --max-budget-usd remains the real ceiling (Mateo's ruling, 2026-08-26).
+# REVIEW_MAX_TURNS still wins, so a deliberately short run stays possible.
+MAX_TURNS="${REVIEW_MAX_TURNS:-500}" # capture:max-turns
 # The round ceiling Mateo asked for: bounded, and configurable in 1 place.
 MAX_ROUNDS="${REVIEW_MAX_ROUNDS:-4}" # guard:round-limit
 # The footer that marks a comment as this agent's. It is how a round is counted,
