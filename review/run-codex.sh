@@ -29,6 +29,7 @@ env -i \
   codex \
   --ask-for-approval never \
   --sandbox read-only \
+  --config tools.view_image=false \
   --disable shell_tool \
   --disable unified_exec \
   --disable image_generation \
