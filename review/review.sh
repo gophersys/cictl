@@ -195,7 +195,9 @@ if [ "$HARNESS" = "codex" ]; then
   while IFS= read -r encoded_path; do
     context_path="$(jq -r . <<< "$encoded_path")"
     case "$context_path" in /*|*'..'*) continue ;; esac
-    [ -f "$context_path" ] && [ ! -L "$context_path" ] || continue
+    if [ ! -f "$context_path" ] || [ -L "$context_path" ]; then
+      continue
+    fi
     file_bytes="$(wc -c < "$context_path")"
     [ "$file_bytes" -le 262144 ] || continue
     [ "$(( context_bytes + file_bytes ))" -le 1048576 ] || continue
