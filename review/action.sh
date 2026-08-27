@@ -37,17 +37,6 @@ case "${REVIEW_HARNESS:-}" in
   *) die "harness must be 'claude' or 'codex', got '${REVIEW_HARNESS:-}'" ;; # guard:harness
 esac
 
-# The review pool image advances on the slower devcontainer release train. Pin
-# the ephemeral job to the CLI this action was tested against, so a runner lag
-# cannot silently weaken or break the tool boundary.
-if [[ "$REVIEW_HARNESS" == "codex" ]]; then
-  command -v npm >/dev/null 2>&1 || die "npm is required to install the pinned Codex reviewer"
-  codex_version="$(codex --version 2>/dev/null | awk '{print $2}' || true)"
-  if [[ "$codex_version" != "0.150.1" ]]; then
-    npm install --global @openai/codex@0.150.1
-  fi
-fi
-
 # The model. `opus` and `sonnet` are the CLI FAMILY ALIASES: each tracks the
 # newest model of its family as the pinned CLI advances, which is why the presets
 # use them and not a pinned id — a pinned id is a second version home that ages

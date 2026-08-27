@@ -9,15 +9,16 @@ attempt: 1/2
 
 ## Goal
 
-Run the tool-less Codex reviewer on a cictl-owned pinned CLI even when the
-devcontainer runner image is temporarily behind that version.
+Run the tool-less Codex reviewer with every interactive capability explicitly
+disabled on the trusted, version-pinned review runner image.
 
 ## Plan
 
-plan: SELF-APPROVED — installing a pinned CLI in each ephemeral review job adds a
-small network/startup cost, but it is narrower and faster than publishing all six
-devcontainer images merely to unblock review. The devcontainer pin remains a
-recorded alignment follow-up.
+plan: SELF-APPROVED — the original legacy-config workaround could not prove that
+`view_image` was disabled. The plan is amended to require Codex 0.150.1 in the
+trusted devcontainer image, retain strict config and an explicit feature deny,
+and forbid runtime package installation in the review job. The cost is a
+coordinated image release; the benefit is an immutable, pre-smoked executable.
 
 1. Add a real 0.146.0 parser probe that requires the legacy image-disable config
    to load without making an authenticated request.
@@ -50,11 +51,17 @@ recorded alignment follow-up.
   denied.
 - A second rereview proved that merely documenting the handler was insufficient:
   attacker-controlled changed-file text can name a guessed absolute image path.
-  The final fix instead installs pinned Codex 0.150.1 in the ephemeral Codex job
-  and restores the explicit `view_image` deny; strict config remains enabled.
+  The final fix requires baked Codex 0.150.1 and restores the explicit
+  `view_image` deny; strict config remains enabled.
 - Real 0.150.1 adapter conformance, ShellCheck, action discrimination, and
-  `git diff --check` pass. The full gate passed immediately before this narrow
-  installer revision; the remote gate will rerun the complete suite.
+  `git diff --check` pass.
+- Independent review rejected runtime `npm install --global`: it ran before the
+  scrubbed environment and lacked a trustworthy postcondition. The installer is
+  removed. `.devcontainer` PR 115 now owns the canonical 0.150.1 image pin and
+  its six-image rehearsal; Eden PR 25 carries the matching harness pin.
+- `shellcheck -S style review/action.sh review/run-codex.sh review/run-codex_test.sh`,
+  `bash ./ctl.sh gate`, and `git diff --check` pass with no runtime installer;
+  the gate proved all 45 reviewer guards and all eight action assertions can fail.
 
 ## Blocked
 
@@ -62,4 +69,5 @@ recorded alignment follow-up.
 
 ## Next
 
-Push the pinned-installer fix, receive rereview, and inspect the remote gate.
+Run the full gate without a runtime installer, push, and receive rereview after
+the trusted image rehearsal passes.
