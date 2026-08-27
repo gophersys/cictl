@@ -1,0 +1,52 @@
+# codex-runner-flags
+
+phase: plan
+repo: gophersys/cictl
+branch: fix/codex-runner-flags
+worktree: ~/code/.worktrees/cictl-codex-runner-flags
+pr: -
+attempt: 0/2
+
+## Goal
+
+Make the Codex reviewer run against the exact Codex CLI version installed in the
+private review-runner image, while preserving the read-only/no-tools boundary.
+
+## Plan
+
+plan: SELF-APPROVED — the risk is silently enabling a capability when removing
+an unsupported disable flag. The removed `view_image` flag does not grant image
+access because the review prompt contains text only and the runner exposes no
+image tool or image input; all six capabilities available in 0.146.0 remain
+explicitly disabled.
+
+1. Strengthen installed-CLI conformance to require every disabled feature and
+   pin CI to the deployed runner's Codex 0.146.0.
+2. Prove the existing command fails against that exact CLI because `view_image`
+   is unknown.
+3. Remove only the unsupported flag; prove the stub boundary and real CLI
+   conformance green.
+4. Run cictl's repository gate, submit, review, clean up, and merge.
+5. Repin Eden's review workflow to the immutable corrected cictl commit.
+
+Affected target: cictl's Codex reviewer adapter and its conformance test. Fastest
+proof: `bash review/run-codex_test.sh`.
+
+Explicit exclusions: no runner image rebuild, no authentication changes, no
+review prompt or verdict changes, no Claude adapter changes.
+
+## Proven
+
+- Eden run 33047602597 authenticated with `Logged in using ChatGPT`, then failed
+  before inference with `Unknown feature flag: view_image`.
+- The deployed cloud image pins Codex 0.146.0. A real 0.146.0 `features list`
+  exposes `shell_tool`, `unified_exec`, `image_generation`, `browser_use`, `apps`,
+  and `multi_agent`, but not `view_image`.
+
+## Blocked
+
+-
+
+## Next
+
+Strengthen conformance and prove the current command red against Codex 0.146.0.
