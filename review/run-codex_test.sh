@@ -52,7 +52,8 @@ second="$(sed -n '2p' "$WORK/calls")"
 [[ "$first" == "login status" ]] || fail "authentication was not checked first: $first"
 [[ "$second" == *"--ask-for-approval never --sandbox read-only"* ]] || fail "approval/sandbox boundary is incomplete: $second"
 [[ "$second" == *"--config tools.view_image=false"* ]] || fail "view_image is not disabled: $second"
-[[ "$second" == *"--ephemeral"* && "$second" == *"--ignore-user-config"* && "$second" == *"--strict-config"* ]] || fail "automation flags are incomplete: $second"
+[[ "$second" == *"--ephemeral"* && "$second" == *"--ignore-user-config"* ]] || fail "automation flags are incomplete: $second"
+[[ "$second" != *"--strict-config"* ]] || fail "deployed Codex rejects the legacy image-disable key in strict mode: $second"
 [[ "$second" == *"--skip-git-repo-check"* ]] || fail "Codex was not isolated from pull-request instructions: $second"
 [[ "$second" != *"--model default"* ]] || fail "the neutral model sentinel reached Codex: $second"
 grep -qx 'GH_TOKEN=unset OPENAI_API_KEY=unset' "$WORK/env" || fail "a CI credential reached the model process"
@@ -71,5 +72,13 @@ while IFS= read -r feature; do
   [[ -n "$feature" ]] || continue
   grep -q "^${feature}[[:space:]]" <<< "$features" || fail "installed Codex has no feature named $feature"
 done <<< "$disabled_features"
+
+mkdir -p "$WORK/noauth"
+set +e
+config_probe="$(CODEX_HOME="$WORK/noauth" "$REAL_CODEX" --config tools.view_image=false exec --skip-git-repo-check --json - </dev/null 2>&1)"
+config_rc=$?
+set -e
+[[ $config_rc -ne 0 && "$config_probe" == *"No prompt provided via stdin."* ]] \
+  || fail "installed Codex did not accept the legacy image-disable key without inference: $config_probe"
 
 printf 'run-codex-test: OK\n'

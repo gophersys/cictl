@@ -39,7 +39,6 @@ env -i \
   exec \
   --ephemeral \
   --ignore-user-config \
-  --strict-config \
   --cd "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" \
   --skip-git-repo-check \
   --json \

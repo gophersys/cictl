@@ -1,6 +1,6 @@
 # codex-legacy-image-config
 
-phase: red
+phase: verify
 repo: gophersys/cictl
 branch: fix/codex-legacy-image-config
 worktree: ~/code/.worktrees/cictl-codex-legacy-image-config
@@ -34,6 +34,14 @@ and independently denies every feature-backed tool.
 - A no-auth real 0.146.0 probe without strict mode accepted
   `tools.view_image=false` and progressed to request handling; this is parser
   evidence only and exposed no credential.
+- RED — the real 0.146.0 `run-codex_test.sh` exited 1 and printed
+  `deployed Codex rejects the legacy image-disable key in strict mode`, including
+  the current strict adapter invocation.
+- GREEN — the same real-version test exits 0 after removing strict mode; its
+  no-auth parser probe reaches `No prompt provided via stdin`, proving the legacy
+  image-disable key loaded without inference or credentials.
+- ShellCheck, `git diff --check`, and the full `bash ./ctl.sh gate` exit 0; all 45
+  reviewer guards and eight action assertions retain their mutation proof.
 
 ## Blocked
 
@@ -41,4 +49,4 @@ and independently denies every feature-backed tool.
 
 ## Next
 
-Add the real parser regression and prove it red.
+Commit and receive independent review before submission.
