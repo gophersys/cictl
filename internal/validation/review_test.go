@@ -25,7 +25,8 @@ func reviewBase() *contract.Contract {
 		},
 		Review: contract.Review{
 			Enabled: true, Ref: "0123456789abcdef0123456789abcdef01234567",
-			Tier: contract.ReviewTierPlatform, RunsOn: "arc-review", TimeoutMinutes: 30,
+			Harness: contract.ReviewHarnessClaude,
+			Tier:    contract.ReviewTierPlatform, RunsOn: "arc-review", TimeoutMinutes: 30,
 			StreamStore: contract.ReviewStreamMinio, StreamEndpoint: "https://minio.example.invalid", StreamBucket: "review-streams",
 		},
 		Providers:  []contract.Provider{contract.ProviderGithub},
@@ -97,6 +98,7 @@ func TestValidate_ReviewRules(t *testing.T) {
 		{"an abbreviated sha is not a pin", func(c *contract.Contract) { c.Review.Ref = "0123456" }, "/review/ref"},
 		{"an uppercase sha is not a pin", func(c *contract.Contract) { c.Review.Ref = strings.ToUpper("0123456789abcdef0123456789abcdef01234567") }, "/review/ref"},
 		{"an empty ref is not a pin", func(c *contract.Contract) { c.Review.Ref = "" }, "/review/ref"},
+		{"an unknown harness is refused", func(c *contract.Contract) { c.Review.Harness = "other" }, "/review/harness"},
 		{"an unknown tier has no preset", func(c *contract.Contract) { c.Review.Tier = "archive" }, "/review/tier"},
 		{"an empty tier has no preset", func(c *contract.Contract) { c.Review.Tier = "" }, "/review/tier"},
 		{"a review job needs a pool", func(c *contract.Contract) { c.Review.RunsOn = "" }, "/review/runsOn"},

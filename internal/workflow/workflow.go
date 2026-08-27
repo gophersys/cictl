@@ -115,7 +115,16 @@ func renderReview(c *contract.Contract) (string, error) {
 	fmt.Fprintf(&b, "      - uses: gophersys/cictl/review@%s%s\n", r.Ref, releaseComment(r.Release))
 	b.WriteString("        with:\n")
 	b.WriteString("          pr: ${{ github.event.pull_request.number }}\n")
-	fmt.Fprintf(&b, "          model: %s\n", preset.Model)
+	harness := r.Harness
+	if harness == "" {
+		harness = contract.ReviewHarnessClaude
+	}
+	fmt.Fprintf(&b, "          harness: %s\n", harness)
+	model := preset.Model
+	if harness == contract.ReviewHarnessCodex {
+		model = "default"
+	}
+	fmt.Fprintf(&b, "          model: %s\n", model)
 	fmt.Fprintf(&b, "          budget-usd: %q\n", strconv.Itoa(preset.BudgetUsd))
 	fmt.Fprintf(&b, "          max-rounds: %q\n", strconv.Itoa(preset.MaxRounds))
 	fmt.Fprintf(&b, "          stream-store: %s\n", r.StreamStore)

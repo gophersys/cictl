@@ -64,6 +64,7 @@ function cmd_test_review() {
   require_cmd bash sed cmp env ln cp
   log_info "test-review: review/review_test.sh (guards, then mutation proof)"
   (cd "$PROJECT_ROOT" && bash review/review_test.sh)
+  (cd "$PROJECT_ROOT" && bash review/run-codex_test.sh)
   log_success "test-review: OK"
 }
 

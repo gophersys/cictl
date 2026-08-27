@@ -13,7 +13,7 @@
 # `uses:` line, into ${{ github.action_path }}. So the source on disk IS the
 # pinned commit. There is no `git fetch`, no context variable and no pin guard,
 # because there is nothing left to verify: running `$GITHUB_ACTION_PATH/review.sh`
-# is running the commit the caller asked for. review.sh already resolves CLAUDE.md
+# is running the commit the caller asked for. review.sh resolves REVIEW.md
 # beside itself, so the instructions are that same commit too.
 #
 # THE CALLER IS GENERATED. `cictl generate` renders .github/workflows/pr-review.yml
@@ -32,17 +32,20 @@ inputs:
   pr:
     description: The pull request number to review.
     required: true
+  harness:
+    description: "The agent harness: `claude` or `codex`."
+    required: false
+    default: claude
   model:
     description: >-
-      The Claude model. Use the CLI FAMILY ALIAS (`opus` or `sonnet`), never a
-      pinned model id: the alias tracks the newest model of that family as the
-      pinned CLI advances, which is the standing policy. A pinned id is a second
-      version home that ages silently. An explicit id is still accepted for a
-      deliberately pinned review — a bisect, a regression hunt.
+      The selected harness model. Claude uses `opus` or `sonnet`; Codex accepts
+      `default` or an explicit model identifier.
     required: false
-    default: opus
+    default: default
   budget-usd:
-    description: The per-round spend ceiling, in whole US dollars.
+    description: >-
+      Claude's per-round spend ceiling, in whole US dollars. ChatGPT-managed
+      Codex has no equivalent CLI ceiling; the job timeout remains its hard wall.
     required: false
     default: "25"
   max-rounds:
@@ -79,6 +82,7 @@ runs:
       shell: bash
       env:
         REVIEW_PR: ${{ inputs.pr }}
+        REVIEW_HARNESS: ${{ inputs.harness }}
         REVIEW_MODEL: ${{ inputs.model }}
         REVIEW_BUDGET_USD: ${{ inputs.budget-usd }}
         REVIEW_MAX_ROUNDS: ${{ inputs.max-rounds }}
