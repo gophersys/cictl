@@ -137,6 +137,7 @@ case "\$1 \$2" in
     case "\$*" in
       *comments*)
         if [ -n "\$filter" ]; then jq -r "\$filter" "$sb/fx/comments"; else cat "$sb/fx/comments"; fi ;;
+      *files*)   cat "$sb/fx/files" ;;
       *title*)   printf 'a stub pull request title\n' ;;
       *body*)    printf 'a stub pull request body\n' ;;
       *) printf 'gh stub: unmodelled pr view: %s\n' "\$*" >&2; exit 64 ;;
@@ -167,6 +168,7 @@ EOF
   printf 'diff --git a/x.go b/x.go\n--- a/x.go\n+++ b/x.go\n+var x = 1\n' > "$sb/fx/diff"
   # No earlier review by default. gh returns a JSON object, so the fixture is one.
   printf '{"comments":[]}\n' > "$sb/fx/comments"
+  printf '{"files":[{"path":"x.go"}]}\n' > "$sb/fx/files"
   printf 'Where: x.go:1\nWhat: nothing that blocks the merge.\n\nAPPROVE\n' > "$sb/fx/out"
   printf '0\n' > "$sb/fx/rc"
   printf '{}\n' > "$sb/home/auth.json"
@@ -239,12 +241,15 @@ t_openai_api_key_is_refused() {
 t_codex_posts_the_same_verdict_contract() {
   local sb; sb="$(new_sandbox)"
   printf 'package example\n\nvar x = 1\n' > "$sb/x.go"
+  printf 'must never enter the prompt\n' > "$sb/unchanged-secret"
+  printf '\n+++ b/unchanged-secret\n' >> "$sb/fx/diff"
   run_review "$sb" REVIEW_HARNESS=codex REVIEW_MODEL=default CODEX_HOME="$sb/home" GH_TOKEN=gh-token-stub -- 1
   assert_rc_zero
   assert_comment_posted
   grep -q APPROVE "$SB/posted_body" || fail "Codex output was not posted"
   grep -q 'login status' "$SB/calls/codex.log" || fail "Codex membership auth was not checked"
   grep -q 'FULL CHANGED FILE: x.go' "$SB/prompt_seen" || fail "Codex did not receive the bounded full changed file"
+  ! grep -q 'must never enter the prompt' "$SB/prompt_seen" || fail "patch text authorized an unchanged file read"
 }
 
 # --------------------------------------------------------------------------

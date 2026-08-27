@@ -109,11 +109,12 @@ log "reviewing pull request #${PR} with ${HARNESS}/${MODEL}"
 # Create every temp file BEFORE the trap. A trap that names a variable which is
 # not yet set aborts on `set -u`, removes nothing, and leaks the file that holds
 # the complete diff on the runner.
-diff_file="$(mktemp)"; prompt_file="$(mktemp)"; out_file="$(mktemp)"; err_file="$(mktemp)" # guard:temp-lifetime
-trap 'rm -f "$diff_file" "$prompt_file" "$out_file" "$err_file"' EXIT
+diff_file="$(mktemp)"; files_file="$(mktemp)"; prompt_file="$(mktemp)"; out_file="$(mktemp)"; err_file="$(mktemp)" # guard:temp-lifetime
+trap 'rm -f "$diff_file" "$files_file" "$prompt_file" "$out_file" "$err_file"' EXIT
 
 gh pr diff "$PR" > "$diff_file" || die "cannot read the diff for #${PR}"
 [ -s "$diff_file" ] || die "the diff for #${PR} is empty" # guard:empty-diff
+gh pr view "$PR" --json files > "$files_file" || die "cannot read the changed-file manifest for #${PR}"
 log "diff: $(wc -l < "$diff_file") lines"
 
 # Round 2 sees the previous review, so it can judge whether each finding is now
@@ -191,11 +192,8 @@ fi
 # and are capped so one generated file cannot consume the entire context window.
 if [ "$HARNESS" = "codex" ]; then
   context_bytes=0
-  while IFS= read -r diff_line; do
-    case "$diff_line" in
-      '+++ b/'*) context_path="${diff_line#+++ b/}" ;;
-      *) continue ;;
-    esac
+  while IFS= read -r encoded_path; do
+    context_path="$(jq -r . <<< "$encoded_path")"
     case "$context_path" in /*|*'..'*) continue ;; esac
     [ -f "$context_path" ] && [ ! -L "$context_path" ] || continue
     file_bytes="$(wc -c < "$context_path")"
@@ -208,7 +206,7 @@ if [ "$HARNESS" = "codex" ]; then
       printf '\n```\n'
     } >> "$prompt_file"
     context_bytes=$(( context_bytes + file_bytes ))
-  done < "$diff_file"
+  done < <(jq -c '.files[].path' "$files_file")
   log "Codex context: ${context_bytes} bytes of full changed files (1 MiB total, 256 KiB/file caps)"
 fi
 
