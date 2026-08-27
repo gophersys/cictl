@@ -1,10 +1,10 @@
 # codex-runner-flags
 
-phase: verify
+phase: wait
 repo: gophersys/cictl
 branch: fix/codex-runner-flags
 worktree: ~/code/.worktrees/cictl-codex-runner-flags
-pr: -
+pr: 27
 attempt: 0/2
 
 ## Goal
@@ -60,4 +60,4 @@ review prompt or verdict changes, no Claude adapter changes.
 
 ## Next
 
-Run an independent read-only review, then submit the pull request.
+Poll pull request 27, inspect the remote gate, and receive the independent review.
