@@ -50,6 +50,6 @@ jobs:
           # The reviewer gate exercises the real CLI's automation surface without
           # authenticating or making a provider call. Keep this aligned with the
           # version installed in the private review-runner image.
-          npm install --global @openai/codex@0.150.1
+          npm install --global @openai/codex@0.146.0
       - name: ctl.sh gate
         run: bash ./ctl.sh gate
