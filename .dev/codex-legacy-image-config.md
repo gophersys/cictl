@@ -1,10 +1,10 @@
 # codex-legacy-image-config
 
-phase: verify
+phase: wait
 repo: gophersys/cictl
 branch: fix/codex-legacy-image-config
 worktree: ~/code/.worktrees/cictl-codex-legacy-image-config
-pr: -
+pr: 28
 attempt: 0/2
 
 ## Goal
@@ -49,4 +49,4 @@ and independently denies every feature-backed tool.
 
 ## Next
 
-Commit and receive independent review before submission.
+Poll pull request 28, inspect the remote gate, and receive independent review.
