@@ -32,16 +32,25 @@ die() { printf '\033[0;31m[review-action]\033[0m %s\n' "$*" >&2; exit 1; }
 # A pull request number, and nothing that could be a flag or a path.
 [[ "${REVIEW_PR:-}" =~ ^[1-9][0-9]*$ ]] || die "pr must be a positive whole number, got '${REVIEW_PR:-}'" # guard:pr
 
+case "${REVIEW_HARNESS:-}" in
+  claude | codex) : ;; # capture:harness
+  *) die "harness must be 'claude' or 'codex', got '${REVIEW_HARNESS:-}'" ;; # guard:harness
+esac
+
 # The model. `opus` and `sonnet` are the CLI FAMILY ALIASES: each tracks the
 # newest model of its family as the pinned CLI advances, which is why the presets
 # use them and not a pinned id — a pinned id is a second version home that ages
 # silently, and today's would be claude-opus-5 / claude-sonnet-5. An explicit
 # `claude-*` id is still accepted, for a deliberately pinned review. Anything
 # else is refused rather than handed to a paid agent.
-case "${REVIEW_MODEL:-}" in
-  opus | sonnet | claude-*) : ;; # capture:model
-  *) die "model must be the family alias 'opus' or 'sonnet', or an explicit claude-* id; got '${REVIEW_MODEL:-}'" ;; # guard:model
-esac
+if [[ "$REVIEW_HARNESS" == "claude" ]]; then
+  case "${REVIEW_MODEL:-}" in
+    opus | sonnet | claude-*) : ;; # capture:model
+    *) die "Claude model must be 'opus', 'sonnet', or an explicit claude-* id; got '${REVIEW_MODEL:-}'" ;; # guard:model
+  esac
+elif [[ ! "${REVIEW_MODEL:-}" =~ ^(default|[A-Za-z0-9._-]+)$ ]]; then
+  die "Codex model must be 'default' or a model identifier; got '${REVIEW_MODEL:-}'" # guard:codex-model
+fi
 
 # The spend ceiling, in whole dollars. Zero is refused: a review that cannot
 # spend anything produces no verdict and still occupies a runner slot.
@@ -59,6 +68,6 @@ case "${REVIEW_STREAM_STORE:-minio}" in
 esac
 
 log "reviewer: ${HERE}/review.sh"
-log "model ${REVIEW_MODEL}, budget \$${REVIEW_BUDGET_USD}, ${REVIEW_MAX_ROUNDS} round(s)"
+log "harness ${REVIEW_HARNESS}, model ${REVIEW_MODEL}, budget \$${REVIEW_BUDGET_USD}, ${REVIEW_MAX_ROUNDS} round(s)"
 
 exec bash "$HERE/review.sh" "$REVIEW_PR"

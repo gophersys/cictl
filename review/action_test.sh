@@ -416,14 +416,14 @@ t_every_spend_input_is_guarded_before_a_dollar_is_spent() {
   # caller cannot express a tier at all and every repository reviews at whatever
   # review.sh happens to default to.
   local key
-  for key in pr model budget-usd max-rounds; do
+  for key in pr harness model budget-usd max-rounds; do
     if [ "$(count_matching "$action" "^  ${key}:[ \t]*\$")" -eq 0 ]; then
       fail "action.yml declares no '$key' input, so no caller can set it and the tier presets cannot reach the reviewer"
     fi
   done
 
   local guard
-  for guard in pr model budget rounds; do
+  for guard in pr harness model codex-model budget rounds; do
     assert_guard "$preflight" "$guard" "An unchecked input reaches a paid agent"
   done
 
@@ -433,7 +433,7 @@ t_every_spend_input_is_guarded_before_a_dollar_is_spent() {
   exec_line="$(awk '/exec[[:space:]]+bash/ { print NR; exit }' "$preflight")"
   [ -n "$exec_line" ] || fail "action.sh never execs the reviewer, so the action dispatches to nothing"
   local last_guard
-  last_guard="$(awk '/# guard:(pr|model|budget|rounds)$/ { n = NR } END { print n + 0 }' "$preflight")"
+  last_guard="$(awk '/# guard:(pr|harness|model|codex-model|budget|rounds)$/ { n = NR } END { print n + 0 }' "$preflight")"
   if [ "$last_guard" -ge "$exec_line" ]; then
     fail "a spend guard sits at line $last_guard, at or below the exec of the reviewer at line $exec_line, so it runs after the money is already committed"
   fi
@@ -605,7 +605,9 @@ TESTS=(
 MARKER_COVERAGE="
 guard:source            t_the_reviewer_runs_at_the_pinned_commit
 guard:pr                t_every_spend_input_is_guarded_before_a_dollar_is_spent
+guard:harness           t_every_spend_input_is_guarded_before_a_dollar_is_spent
 guard:model             t_every_spend_input_is_guarded_before_a_dollar_is_spent
+guard:codex-model       t_every_spend_input_is_guarded_before_a_dollar_is_spent
 guard:budget            t_every_spend_input_is_guarded_before_a_dollar_is_spent
 guard:rounds            t_every_spend_input_is_guarded_before_a_dollar_is_spent
 guard:stream-store      t_every_spend_input_is_guarded_before_a_dollar_is_spent

@@ -50,7 +50,7 @@ fail() { printf '       %s\n' "$*" >&2; exit 1; }
 # reviewer output before refusing a verdict-less review.
 # jq is REAL, not a stub: review.sh parses the agent's event stream with it, so a
 # stub would test nothing. git is still a stub, because it is only gated on.
-COREUTILS=(bash dirname rm wc cat grep tail jq)
+COREUTILS=(bash dirname rm wc cat grep tail jq sed)
 
 # new_sandbox prints the path of a fresh sandbox directory.
 new_sandbox() {
@@ -100,6 +100,28 @@ fi
 exit "\$(cat "$sb/fx/rc")"
 EOF
 
+  cat > "$sb/bin/codex" <<EOF
+#!/usr/bin/env bash
+set -eu
+printf '%s\n' "\$*" >> "$sb/calls/codex.log"
+if [ "\${1:-} \${2:-}" = "login status" ]; then exit 0; fi
+cat > "$sb/prompt_seen"
+last=""
+prev=""
+for a in "\$@"; do
+  [ "\$prev" = "--output-last-message" ] && last="\$a"
+  prev="\$a"
+done
+[ -n "\$last" ] || { printf 'codex stub: missing --output-last-message\n' >&2; exit 64; }
+cat "$sb/fx/out" > "\$last"
+printf '%s\n' \
+  '{"type":"thread.started","thread_id":"t-1"}' \
+  '{"type":"turn.started"}' \
+  '{"type":"item.completed","item":{"id":"i-1","type":"agent_message","text":"APPROVE"}}' \
+  '{"type":"turn.completed","usage":{"input_tokens":10,"cached_input_tokens":2,"output_tokens":1}}'
+exit "\$(cat "$sb/fx/rc")"
+EOF
+
   cat > "$sb/bin/gh" <<EOF
 #!/usr/bin/env bash
 set -eu
@@ -138,7 +160,7 @@ EOF
 printf '%s\n' "\$*" >> "$sb/calls/git.log"
 EOF
 
-  chmod +x "$sb/bin/mktemp" "$sb/bin/claude" "$sb/bin/gh" "$sb/bin/git"
+  chmod +x "$sb/bin/mktemp" "$sb/bin/claude" "$sb/bin/codex" "$sb/bin/gh" "$sb/bin/git"
 
   # Default fixtures: a real-looking diff, no earlier review, an approving
   # reviewer that exits 0. Each test overrides what it is about.
@@ -147,8 +169,10 @@ EOF
   printf '{"comments":[]}\n' > "$sb/fx/comments"
   printf 'Where: x.go:1\nWhat: nothing that blocks the merge.\n\nAPPROVE\n' > "$sb/fx/out"
   printf '0\n' > "$sb/fx/rc"
+  printf '{}\n' > "$sb/home/auth.json"
 
   cp "$SUT" "$sb/review/review.sh"
+  cp "$HERE/run-codex.sh" "$sb/review/run-codex.sh"
   cp "$INSTRUCTIONS" "$sb/review/CLAUDE.md"
   printf '%s\n' "$sb"
 }
@@ -174,6 +198,52 @@ run_review() {
 
 # CREDS is the environment of a run that should reach the agent.
 CREDS=(CLAUDE_CODE_OAUTH_TOKEN=oauth-token-stub GH_TOKEN=gh-token-stub)
+
+t_unknown_harness_is_refused() {
+  local sb; sb="$(new_sandbox)"
+  run_review "$sb" REVIEW_HARNESS=other GH_TOKEN=gh-token-stub -- 1
+  assert_rc_nonzero
+  assert_stderr_has "unknown review harness"
+}
+
+t_missing_codex_tool_is_named() {
+  local sb; sb="$(new_sandbox)"
+  rm -f "$sb/bin/codex"
+  run_review "$sb" REVIEW_HARNESS=codex CODEX_HOME="$sb/home" GH_TOKEN=gh-token-stub -- 1
+  assert_rc_nonzero
+  assert_stderr_has "missing required tool(s): codex"
+}
+
+t_missing_codex_home_is_refused() {
+  local sb; sb="$(new_sandbox)"
+  run_review "$sb" REVIEW_HARNESS=codex GH_TOKEN=gh-token-stub -- 1
+  assert_rc_nonzero
+  assert_stderr_has "CODEX_HOME is empty"
+}
+
+t_missing_codex_auth_is_refused() {
+  local sb; sb="$(new_sandbox)"
+  rm -f "$sb/home/auth.json"
+  run_review "$sb" REVIEW_HARNESS=codex CODEX_HOME="$sb/home" GH_TOKEN=gh-token-stub -- 1
+  assert_rc_nonzero
+  assert_stderr_has "auth.json is missing or empty"
+}
+
+t_openai_api_key_is_refused() {
+  local sb; sb="$(new_sandbox)"
+  run_review "$sb" REVIEW_HARNESS=codex CODEX_HOME="$sb/home" OPENAI_API_KEY=wrong GH_TOKEN=gh-token-stub -- 1
+  assert_rc_nonzero
+  assert_stderr_has "OPENAI_API_KEY is set"
+}
+
+t_codex_posts_the_same_verdict_contract() {
+  local sb; sb="$(new_sandbox)"
+  run_review "$sb" REVIEW_HARNESS=codex REVIEW_MODEL=default CODEX_HOME="$sb/home" GH_TOKEN=gh-token-stub -- 1
+  assert_rc_zero
+  assert_comment_posted
+  grep -q APPROVE "$SB/posted_body" || fail "Codex output was not posted"
+  grep -q 'login status' "$SB/calls/codex.log" || fail "Codex membership auth was not checked"
+}
 
 # --------------------------------------------------------------------------
 # assertions
@@ -781,6 +851,12 @@ t_after_the_closing_pass_no_further_review() {
 }
 
 TESTS=(
+  t_unknown_harness_is_refused
+  t_missing_codex_tool_is_named
+  t_missing_codex_home_is_refused
+  t_missing_codex_auth_is_refused
+  t_openai_api_key_is_refused
+  t_codex_posts_the_same_verdict_contract
   t_usage_requires_pr_number
   t_missing_tool_is_named
   t_missing_oauth_token
@@ -828,6 +904,12 @@ TESTS=(
 # expression, and matching on the expression text silently missed every
 # substitution mutation.
 MARKER_COVERAGE="
+capture:harness               t_codex_posts_the_same_verdict_contract
+guard:harness                 t_unknown_harness_is_refused
+guard:codex-tools             t_missing_codex_tool_is_named
+guard:codex-home              t_missing_codex_home_is_refused
+guard:codex-auth              t_missing_codex_auth_is_refused
+guard:openai-api-key          t_openai_api_key_is_refused
 guard:usage                 t_usage_requires_pr_number
 guard:tools                 t_missing_tool_is_named
 guard:oauth                 t_missing_oauth_token
@@ -894,6 +976,12 @@ every_marker_is_covered() {
 # shellcheck disable=SC2016 # the sed text is data, not shell to expand
 mutation_for() {
   case "$1" in
+    t_unknown_harness_is_refused)               printf '/# guard:harness$/d' ;;
+    t_missing_codex_tool_is_named)              printf '/# guard:codex-tools$/d' ;;
+    t_missing_codex_home_is_refused)            printf '/# guard:codex-home$/d' ;;
+    t_missing_codex_auth_is_refused)            printf '/# guard:codex-auth$/d' ;;
+    t_openai_api_key_is_refused)                printf '/# guard:openai-api-key$/d' ;;
+    t_codex_posts_the_same_verdict_contract)    printf 's|^HARNESS=.*|HARNESS="claude" # capture:harness|' ;;
     # Narrow the pattern back to the bare token this once rejected a real review for.
     t_a_markdown_verdict_is_understood)          printf 's|^RE_REQUEST_CHANGES=.*|RE_REQUEST_CHANGES="^REQUEST_CHANGES[[:space:]]*$"|' ;;
     # Drop the anchors so the token matches inside a sentence.

@@ -4,7 +4,7 @@
 # Usage (inside a GitHub Actions job on the arc-review pool):
 #   bash review/review.sh <pr-number>
 #
-# It reads the diff, runs Claude headless with the reviewer instructions, and
+# It reads the diff, runs the selected harness headless with the reviewer instructions, and
 # posts the result as a pull request review.
 #
 # WHAT THIS MIRRORS
@@ -24,12 +24,16 @@ IFS=$'\n\t'
 
 PR="${1:-}"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HARNESS="${REVIEW_HARNESS:-claude}" # capture:harness
 # The default model is the CLI's FAMILY ALIAS, not a pinned id: `opus` tracks
 # the newest Opus as the pinned CLI advances, so the reviewer never silently
 # ages while the organization's CLI moves. The summary logs what the alias
 # RESOLVED to, read from the stream. An explicit REVIEW_MODEL still wins, so a
 # pinned review (a bisect, a cost cap, a regression hunt) stays possible.
 MODEL="${REVIEW_MODEL:-opus}" # capture:model
+if [ "$HARNESS" = "codex" ] && [ -z "${REVIEW_MODEL:-}" ]; then
+  MODEL=default
+fi
 BUDGET_USD="${REVIEW_BUDGET_USD:-25}"
 # THE BUDGET IS THE LIMITER, NOT THE TURN COUNT. At 40 the reviewer was cut off
 # MID-TOOL-CALL on real pull requests and the run died with NO VERDICT: the
@@ -79,17 +83,28 @@ refuse_env() { [ -z "${!1:-}" ] || die "$1 is set; it would take precedence over
 
 [ -n "$PR" ] || die "usage: bash review/review.sh <pr-number>" # guard:usage
 
-require_tools claude gh git jq # guard:tools
-require_env CLAUDE_CODE_OAUTH_TOKEN "The review pool sets it from the claude-review-token Secret. This job must NOT pass silently." # guard:oauth
 require_env GH_TOKEN "The review cannot be posted without it." # guard:gh-token
-refuse_env ANTHROPIC_API_KEY # guard:api-key
-refuse_env ANTHROPIC_AUTH_TOKEN # guard:auth-token
+case "$HARNESS" in
+  claude)
+    require_tools claude gh git jq # guard:tools
+    require_env CLAUDE_CODE_OAUTH_TOKEN "The review pool sets it from the claude-review-token Secret. This job must NOT pass silently." # guard:oauth
+    refuse_env ANTHROPIC_API_KEY # guard:api-key
+    refuse_env ANTHROPIC_AUTH_TOKEN # guard:auth-token
+    ;;
+  codex)
+    require_tools codex gh git jq # guard:codex-tools
+    require_env CODEX_HOME "The review pool mounts its private writable Codex profile here." # guard:codex-home
+    [ -s "$CODEX_HOME/auth.json" ] || die "CODEX_HOME/auth.json is missing or empty. The review pool must seed it from codex-review-auth." # guard:codex-auth
+    refuse_env OPENAI_API_KEY # guard:openai-api-key
+    ;;
+  *) die "unknown review harness '$HARNESS' (want claude or codex)" ;; # guard:harness
+esac
 # `$(cat ...)` on a missing file expands to the empty string and does not stop
 # the script. Without this line a lost CLAUDE.md buys a full-price review that
 # had no instructions.
 [ -f "$HERE/CLAUDE.md" ] || die "the reviewer instructions are missing: $HERE/CLAUDE.md" # guard:instructions
 
-log "reviewing pull request #${PR} with ${MODEL}, budget \$${BUDGET_USD}"
+log "reviewing pull request #${PR} with ${HARNESS}/${MODEL}"
 
 # Create every temp file BEFORE the trap. A trap that names a variable which is
 # not yet set aborts on `set -u`, removes nothing, and leaks the file that holds
@@ -186,18 +201,27 @@ fi
 # to pay for another run. The workflow keeps STREAM_FILE as an artifact.
 #
 # stderr goes to its own file. Merging it into stdout would corrupt the JSONL.
-set +e
-claude -p \
-  --model "$MODEL" \
-  --max-budget-usd "$BUDGET_USD" \
-  --max-turns "$MAX_TURNS" \
-  --permission-mode default \
-  --allowedTools "$READ_ONLY_TOOLS" \
-  --output-format stream-json --verbose \
-  --append-system-prompt "$(cat "$HERE/CLAUDE.md")" \
-  < "$prompt_file" > "$STREAM_FILE" 2> "$err_file"
-rc=$?
-set -e
+if [ "$HARNESS" = "claude" ]; then
+  set +e
+  claude -p \
+    --model "$MODEL" \
+    --max-budget-usd "$BUDGET_USD" \
+    --max-turns "$MAX_TURNS" \
+    --permission-mode default \
+    --allowedTools "$READ_ONLY_TOOLS" \
+    --output-format stream-json --verbose \
+    --append-system-prompt "$(cat "$HERE/CLAUDE.md")" \
+    < "$prompt_file" > "$STREAM_FILE" 2> "$err_file"
+  rc=$?
+  set -e
+else
+  printf '\nHARNESS LIMIT: ChatGPT-managed Codex has no per-run dollar or turn ceiling. The CI job timeout is the hard wall; finish with a verdict before it.\n' >> "$prompt_file"
+  printf '\nREVIEWER INSTRUCTIONS:\n%s\n' "$(cat "$HERE/CLAUDE.md")" >> "$prompt_file"
+  set +e
+  bash "$HERE/run-codex.sh" "$prompt_file" "$STREAM_FILE" "$err_file"
+  rc=$?
+  set -e
+fi
 
 [ -s "$STREAM_FILE" ] || die "the reviewer produced no events (exit ${rc}): $(tail -5 "$err_file")" # guard:empty-stream
 
@@ -206,10 +230,15 @@ set -e
 result="$(jq -c 'select(.type=="result")' "$STREAM_FILE" | tail -1)"
 [ -n "$result" ] || die "the stream has no result event (exit ${rc}); the run did not finish: $(tail -5 "$err_file")" # guard:no-result-event
 
-log "  cost      \$$(jq -r '(.total_cost_usd // 0) * 100 | round / 100' <<< "$result") of \$${BUDGET_USD}" # capture:summary
-log "  turns     $(jq -r '.num_turns // 0' <<< "$result") of ${MAX_TURNS}"
-log "  duration  $(jq -r '(.duration_ms // 0) / 1000 | round' <<< "$result")s"
-log "  stop      $(jq -r '.stop_reason // .terminal_reason // "n/a"' <<< "$result")"
+if [ "$HARNESS" = "claude" ]; then
+  log "  cost      \$$(jq -r '(.total_cost_usd // 0) * 100 | round / 100' <<< "$result") of \$${BUDGET_USD}" # capture:summary
+  log "  turns     $(jq -r '.num_turns // 0' <<< "$result") of ${MAX_TURNS}"
+  log "  duration  $(jq -r '(.duration_ms // 0) / 1000 | round' <<< "$result")s"
+  log "  stop      $(jq -r '.stop_reason // .terminal_reason // "n/a"' <<< "$result")"
+else
+  log "  usage     $(jq -r 'select(.type=="turn.completed") | .usage | "input=\(.input_tokens // 0), cached=\(.cached_input_tokens // 0), output=\(.output_tokens // 0)"' "$STREAM_FILE" | tail -1)"
+  log "  limit     job timeout (Codex membership exposes no dollar or turn ceiling)"
+fi
 # What the model alias RESOLVED to. The init event is where the CLI states the
 # actual model id; without it the log states the alias and says the stream
 # artifact is the record — it never invents a resolution.
@@ -248,12 +277,22 @@ if [ -z "${text//[[:space:]]/}" ]; then
   stop="$(jq -r '.stop_reason // .terminal_reason // "n/a"' <<< "$result")"
   {
     printf 'This push was **not reviewed**: the review died with **no verdict**.\n\n'
-    printf 'The reviewer spent $%s of its $%s budget and stopped after %s of %s turns (stop: %s) without writing a review, so there is no review and no verdict to post.\n\n' "$cost" "$BUDGET_USD" "$turns" "$MAX_TURNS" "$stop"
+    if [ "$HARNESS" = "claude" ]; then
+      printf 'The reviewer spent $%s of its $%s budget and stopped after %s of %s turns (stop: %s) without writing a review, so there is no review and no verdict to post.\n\n' "$cost" "$BUDGET_USD" "$turns" "$MAX_TURNS" "$stop"
+    else
+      printf 'The Codex reviewer stopped without writing a review. Its hard wall is the CI job timeout; ChatGPT membership exposes no dollar or turn ceiling.\n\n'
+    fi
     printf 'Re-run the pr-review check, or review this push manually.\n'
     printf '\n%s\n' "$SKIP_MARKER"
   } > "$out_file"
   gh pr comment "$PR" --body-file "$out_file" || die "could not post the no-verdict death notice" # guard:no-verdict
-  die "the reviewer spent \$${cost} and died with no verdict after ${turns} of ${MAX_TURNS} turns (stop: ${stop}, exit ${rc}). The notice is on the pull request; re-run the review, or review the push manually." # guard:empty-output
+  if [ "$HARNESS" = "claude" ]; then
+    :
+    death_message="the reviewer spent \$${cost} and died with no verdict after ${turns} of ${MAX_TURNS} turns (stop: ${stop}, exit ${rc}). The notice is on the pull request; re-run the review, or review the push manually." # guard:empty-output
+  else
+    death_message="the Codex reviewer died with no verdict (exit ${rc}). The notice is on the pull request; re-run the review, or review the push manually."
+  fi
+  die "$death_message"
 fi
 
 [ "$(jq -r '.is_error // false' <<< "$result")" != "true" ] || die "the reviewer reported an error (stop: $(jq -r '.stop_reason // .terminal_reason // "unknown"' <<< "$result")). Not posting." # guard:agent-error
