@@ -247,12 +247,16 @@ type Review struct {
 type ReviewHarness string
 
 const (
+	// ReviewHarnessClaude executes the reviewer through Claude Code.
 	ReviewHarnessClaude ReviewHarness = "claude"
-	ReviewHarnessCodex  ReviewHarness = "codex"
+	// ReviewHarnessCodex executes the reviewer through Codex CLI.
+	ReviewHarnessCodex ReviewHarness = "codex"
 )
 
+// ReviewHarnesses is the closed set of supported reviewer implementations.
 var ReviewHarnesses = []ReviewHarness{ReviewHarnessClaude, ReviewHarnessCodex}
 
+// JSONSchema contributes the review-harness enum to the emitted schema.
 func (ReviewHarness) JSONSchema() *SchemaEnum {
 	return enumSchema("Agent harness used for pull request review", ReviewHarnesses)
 }
