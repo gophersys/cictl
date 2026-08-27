@@ -64,7 +64,7 @@ exec_help="$("$REAL_CODEX" exec --help)"
 features="$("$REAL_CODEX" features list)"
 grep -q -- '--ask-for-approval' <<< "$codex_help" || fail "installed Codex has no approval-policy flag"
 grep -q -- '--ignore-user-config' <<< "$exec_help" || fail "installed Codex has no isolated-config flag"
-expected_disabled_features="$(printf '%s\n' shell_tool unified_exec image_generation browser_use apps multi_agent)"
+expected_disabled_features="$(printf '%s\n' shell_tool unified_exec view_image image_generation browser_use apps multi_agent)"
 disabled_features="$(sed -n 's/^[[:space:]]*--disable \([^[:space:]\\]*\).*/\1/p' "$HERE/run-codex.sh")"
 [[ "$disabled_features" == "$expected_disabled_features" ]] || fail "Codex deny-list drifted: expected [$expected_disabled_features], got [$disabled_features]"
 while IFS= read -r feature; do

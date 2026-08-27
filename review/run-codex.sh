@@ -31,6 +31,7 @@ env -i \
   --sandbox read-only \
   --disable shell_tool \
   --disable unified_exec \
+  --disable view_image \
   --disable image_generation \
   --disable browser_use \
   --disable apps \
