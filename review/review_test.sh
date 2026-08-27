@@ -22,7 +22,7 @@ IFS=$'\n\t'
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REVIEW_SH="$HERE/review.sh"
-INSTRUCTIONS="$HERE/CLAUDE.md"
+INSTRUCTIONS="$HERE/REVIEW.md"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
@@ -50,7 +50,7 @@ fail() { printf '       %s\n' "$*" >&2; exit 1; }
 # reviewer output before refusing a verdict-less review.
 # jq is REAL, not a stub: review.sh parses the agent's event stream with it, so a
 # stub would test nothing. git is still a stub, because it is only gated on.
-COREUTILS=(bash dirname rm wc cat grep tail jq sed)
+COREUTILS=(bash dirname rm wc cat grep tail jq sed env)
 
 # new_sandbox prints the path of a fresh sandbox directory.
 new_sandbox() {
@@ -173,7 +173,7 @@ EOF
 
   cp "$SUT" "$sb/review/review.sh"
   cp "$HERE/run-codex.sh" "$sb/review/run-codex.sh"
-  cp "$INSTRUCTIONS" "$sb/review/CLAUDE.md"
+  cp "$INSTRUCTIONS" "$sb/review/REVIEW.md"
   printf '%s\n' "$sb"
 }
 
@@ -342,7 +342,7 @@ t_auth_token_outranks_the_token() {
 
 t_missing_instructions() {
   local sb; sb="$(new_sandbox)"
-  rm -f "$sb/review/CLAUDE.md"
+  rm -f "$sb/review/REVIEW.md"
   run_review "$sb" ${CREDS[@]+"${CREDS[@]}"} -- 1
   assert_rc_nonzero
   assert_stderr_has "the reviewer instructions are missing"
@@ -709,7 +709,7 @@ t_a_second_run_is_round_2_and_sees_the_first() {
   assert_stdout_has "posted round 2 of 4"
 }
 
-# review/CLAUDE.md ## Limits promises the agent that "a later round sees your own
+# review/REVIEW.md ## Limits promises the agent that "a later round sees your own
 # earlier comments ... do not open a new front". That promise holds for EVERY
 # round in the loop, not only round 2, so every middle round must be handed the
 # prior review and the judge-only directive. rounds_with 2 makes this round 3 at

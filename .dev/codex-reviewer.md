@@ -52,6 +52,19 @@ budget input does not constrain it.
 - `bash ./ctl.sh gate`: exit 0; build, gofumpt, shellcheck, actionlint, vet,
   golangci-lint, Go race tests, 45 reviewer mutation guards, the Codex adapter
   test, and 8 composite-action discrimination assertions all ran green.
+- Adversarial review initially returned REQUEST_CHANGES on five blockers. The
+  follow-up makes harness selection part of the typed contract and generated
+  caller, resolves the neutral `default` model per harness, starts Codex from the
+  trusted action checkout, disables its shell/unified-exec/browser/app/image and
+  multi-agent tools, and launches it under `env -i` so `GH_TOKEN` and API keys do
+  not reach the model process.
+- `bash review/run-codex_test.sh` now proves the installed CLI exposes the
+  required automation/tool controls, the neutral model is omitted, the PR
+  checkout is not the instruction root, and hostile parent credentials are
+  absent from the Codex process.
+- Targeted Go tests prove `harness: codex` is validated and emitted by the real
+  workflow generator; all contract, validation, workflow, drift, and conformance
+  packages pass.
 
 ## Blocked
 

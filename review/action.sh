@@ -45,8 +45,9 @@ esac
 # else is refused rather than handed to a paid agent.
 if [[ "$REVIEW_HARNESS" == "claude" ]]; then
   case "${REVIEW_MODEL:-}" in
+    default) REVIEW_MODEL=opus; export REVIEW_MODEL ;;
     opus | sonnet | claude-*) : ;; # capture:model
-    *) die "Claude model must be 'opus', 'sonnet', or an explicit claude-* id; got '${REVIEW_MODEL:-}'" ;; # guard:model
+    *) die "Claude model must be 'default', 'opus', 'sonnet', or an explicit claude-* id; got '${REVIEW_MODEL:-}'" ;; # guard:model
   esac
 elif [[ ! "${REVIEW_MODEL:-}" =~ ^(default|[A-Za-z0-9._-]+)$ ]]; then
   die "Codex model must be 'default' or a model identifier; got '${REVIEW_MODEL:-}'" # guard:codex-model

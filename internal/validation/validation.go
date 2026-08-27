@@ -270,6 +270,9 @@ func reviewProblems(r *contract.Review) []Problem {
 		return nil
 	}
 	var p []Problem
+	if r.Harness != "" && r.Harness != contract.ReviewHarnessClaude && r.Harness != contract.ReviewHarnessCodex {
+		p = append(p, Problem{Where: "/review/harness", Message: fmt.Sprintf("unknown review harness %q (want claude or codex)", r.Harness)})
+	}
 	if !sha40.MatchString(r.Ref) {
 		p = append(p, Problem{Where: "/review/ref", Message: fmt.Sprintf("must be a 40-hex commit, got %q; a tag or a branch is a pointer its owner can move", r.Ref)})
 	}

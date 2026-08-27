@@ -18,6 +18,7 @@ func reviewContract(tier contract.ReviewTier) *contract.Contract {
 	c := sampleContract()
 	c.Review = contract.Review{
 		Enabled:        true,
+		Harness:        contract.ReviewHarnessClaude,
 		Ref:            reviewSHA,
 		Release:        "v0.6.0",
 		Tier:           tier,
@@ -28,6 +29,20 @@ func reviewContract(tier contract.ReviewTier) *contract.Contract {
 		StreamBucket:   "review-streams",
 	}
 	return c
+}
+
+func TestRender_TheCallerSelectsCodex(t *testing.T) {
+	t.Parallel()
+	c := reviewContract(contract.ReviewTierPlatform)
+	c.Review.Harness = contract.ReviewHarnessCodex
+	files, err := workflow.Render(c)
+	if err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	body := contentOf(t, files, workflow.ReviewFileName)
+	if !strings.Contains(body, "harness: codex") {
+		t.Fatalf("generated caller did not select Codex:\n%s", body)
+	}
 }
 
 // TestRender_NoReviewBlockRendersThreeFiles is the compatibility floor. Every
@@ -95,6 +110,7 @@ func TestRender_TheCallerCarriesTheTierPreset(t *testing.T) {
 			}
 			body := contentOf(t, files, workflow.ReviewFileName)
 			for _, want := range []string{
+				"harness: claude",
 				"model: " + tc.model,
 				"budget-usd: " + tc.budget,
 				"max-rounds: " + tc.rounds,

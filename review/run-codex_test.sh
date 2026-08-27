@@ -4,6 +4,10 @@ set -Eeuo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
+REAL_CODEX="$(command -v codex)" || {
+  printf 'run-codex-test: FAIL: codex is not installed\n' >&2
+  exit 127
+}
 
 fail() { printf 'run-codex-test: FAIL: %s\n' "$*" >&2; exit 1; }
 
@@ -14,10 +18,11 @@ printf 'review this\n' > "$WORK/prompt"
 cat > "$WORK/bin/codex" <<'EOF'
 #!/usr/bin/env bash
 set -eu
-printf '%s\n' "$*" >> "$CODEX_TEST_CALLS"
+printf '%s\n' "$*" >> "$CODEX_HOME/../calls"
 if [[ "$*" == *"login status"* ]]; then
   exit 0
 fi
+printf 'GH_TOKEN=%s OPENAI_API_KEY=%s\n' "${GH_TOKEN-unset}" "${OPENAI_API_KEY-unset}" > "$CODEX_HOME/../env"
 cat >/dev/null
 printf '%s\n' \
   '{"type":"thread.started","thread_id":"t-1"}' \
@@ -37,16 +42,27 @@ chmod +x "$WORK/bin/codex"
 
 PATH="$WORK/bin:$PATH" \
 CODEX_HOME="$WORK/home" \
-CODEX_TEST_CALLS="$WORK/calls" \
+GH_TOKEN=must-not-reach-model \
+OPENAI_API_KEY=must-not-reach-model \
 REVIEW_MODEL=default \
 bash "$HERE/run-codex.sh" "$WORK/prompt" "$WORK/stream" "$WORK/error"
 
 first="$(sed -n '1p' "$WORK/calls")"
 second="$(sed -n '2p' "$WORK/calls")"
 [[ "$first" == "login status" ]] || fail "authentication was not checked first: $first"
-[[ "$second" == *"--ask-for-approval never --sandbox read-only exec"* ]] || fail "approval/sandbox were not fixed before exec: $second"
+[[ "$second" == *"--ask-for-approval never --sandbox read-only --disable shell_tool"* ]] || fail "approval/sandbox/tool boundary is incomplete: $second"
 [[ "$second" == *"--ephemeral"* && "$second" == *"--ignore-user-config"* && "$second" == *"--strict-config"* ]] || fail "automation flags are incomplete: $second"
+[[ "$second" == *"--skip-git-repo-check"* ]] || fail "Codex was not isolated from pull-request instructions: $second"
+[[ "$second" != *"--model default"* ]] || fail "the neutral model sentinel reached Codex: $second"
+grep -qx 'GH_TOKEN=unset OPENAI_API_KEY=unset' "$WORK/env" || fail "a CI credential reached the model process"
 jq -e -s 'any(.[]; .type == "turn.completed") and any(.[]; .type == "result" and .provider == "codex" and .result == "APPROVE\n")' "$WORK/stream" >/dev/null \
   || fail "stream was not preserved and normalized"
+
+codex_help="$("$REAL_CODEX" --help)"
+exec_help="$("$REAL_CODEX" exec --help)"
+features="$("$REAL_CODEX" features list)"
+grep -q -- '--ask-for-approval' <<< "$codex_help" || fail "installed Codex has no approval-policy flag"
+grep -q -- '--ignore-user-config' <<< "$exec_help" || fail "installed Codex has no isolated-config flag"
+grep -q '^shell_tool[[:space:]]' <<< "$features" || fail "installed Codex cannot disable its shell tool"
 
 printf 'run-codex-test: OK\n'

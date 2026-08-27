@@ -100,9 +100,9 @@ case "$HARNESS" in
   *) die "unknown review harness '$HARNESS' (want claude or codex)" ;; # guard:harness
 esac
 # `$(cat ...)` on a missing file expands to the empty string and does not stop
-# the script. Without this line a lost CLAUDE.md buys a full-price review that
+# the script. Without this line a lost REVIEW.md buys a full-price review that
 # had no instructions.
-[ -f "$HERE/CLAUDE.md" ] || die "the reviewer instructions are missing: $HERE/CLAUDE.md" # guard:instructions
+[ -f "$HERE/REVIEW.md" ] || die "the reviewer instructions are missing: $HERE/REVIEW.md" # guard:instructions
 
 log "reviewing pull request #${PR} with ${HARNESS}/${MODEL}"
 
@@ -210,13 +210,13 @@ if [ "$HARNESS" = "claude" ]; then
     --permission-mode default \
     --allowedTools "$READ_ONLY_TOOLS" \
     --output-format stream-json --verbose \
-    --append-system-prompt "$(cat "$HERE/CLAUDE.md")" \
+    --append-system-prompt "$(cat "$HERE/REVIEW.md")" \
     < "$prompt_file" > "$STREAM_FILE" 2> "$err_file"
   rc=$?
   set -e
 else
   printf '\nHARNESS LIMIT: ChatGPT-managed Codex has no per-run dollar or turn ceiling. The CI job timeout is the hard wall; finish with a verdict before it.\n' >> "$prompt_file"
-  printf '\nREVIEWER INSTRUCTIONS:\n%s\n' "$(cat "$HERE/CLAUDE.md")" >> "$prompt_file"
+  printf '\nREVIEWER INSTRUCTIONS:\n%s\n' "$(cat "$HERE/REVIEW.md")" >> "$prompt_file"
   set +e
   bash "$HERE/run-codex.sh" "$prompt_file" "$STREAM_FILE" "$err_file"
   rc=$?

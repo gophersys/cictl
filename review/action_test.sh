@@ -365,7 +365,7 @@ t_the_action_points_at_something_that_exists() {
   # instructions beside itself. The action names neither, so only this test can
   # see that they are here.
   local f
-  for f in review/review.sh review/CLAUDE.md; do
+  for f in review/review.sh review/REVIEW.md; do
     [ -f "$SUT_ROOT/$f" ] || fail "$f is missing, so the reviewer this action starts would have no ${f##*/} to run with"
   done
 }
@@ -697,8 +697,8 @@ apply_stimulus() {
       [ -f "$root/review/review.sh" ] || die "the counter-stimulus 'rename-the-reviewer' needs review/review.sh"
       mv "$root/review/review.sh" "$root/review/run.sh" ;;
     rename-the-instructions)
-      [ -f "$root/review/CLAUDE.md" ] || die "the counter-stimulus 'rename-the-instructions' needs review/CLAUDE.md"
-      mv "$root/review/CLAUDE.md" "$root/review/INSTRUCTIONS.md" ;;
+      [ -f "$root/review/REVIEW.md" ] || die "the counter-stimulus 'rename-the-instructions' needs review/REVIEW.md"
+      mv "$root/review/REVIEW.md" "$root/review/INSTRUCTIONS.md" ;;
     # The credential gets a second home, in repository scope.
     oauth-secret-in-the-action)
       edit_file "$action" '

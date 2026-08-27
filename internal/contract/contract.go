@@ -210,6 +210,9 @@ type Review struct {
 	// Enabled turns the reviewer on for this repository. False (the default)
 	// renders no pr-review.yml at all.
 	Enabled bool `json:"enabled" yaml:"enabled" jsonschema:"description=Run the pull request review agent in this repository"`
+	// Harness selects the CLI implementation. Empty preserves the historical
+	// Claude default for existing contracts.
+	Harness ReviewHarness `json:"harness,omitempty" yaml:"harness,omitempty"`
 	// Ref is the cictl commit this repository reviews with: a 40-hex SHA, emitted
 	// verbatim on the action's `uses:` line. A repository may sit on an older ref
 	// deliberately; nothing bumps a caller for it.
@@ -238,6 +241,20 @@ type Review struct {
 	StreamEndpoint string `json:"streamEndpoint,omitempty" yaml:"streamEndpoint,omitempty" jsonschema:"description=S3-compatible endpoint for the review stream archive"`
 	// StreamBucket is the bucket the streams land in.
 	StreamBucket string `json:"streamBucket,omitempty" yaml:"streamBucket,omitempty" jsonschema:"description=Bucket the review streams are written to"`
+}
+
+// ReviewHarness is the headless agent implementation used by the reviewer.
+type ReviewHarness string
+
+const (
+	ReviewHarnessClaude ReviewHarness = "claude"
+	ReviewHarnessCodex  ReviewHarness = "codex"
+)
+
+var ReviewHarnesses = []ReviewHarness{ReviewHarnessClaude, ReviewHarnessCodex}
+
+func (ReviewHarness) JSONSchema() *SchemaEnum {
+	return enumSchema("Agent harness used for pull request review", ReviewHarnesses)
 }
 
 // ReviewTier is the repository's governance type, which selects the spend preset.

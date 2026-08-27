@@ -22,14 +22,26 @@ if [[ "$model" != "default" ]]; then
 fi
 
 set +e
-codex \
+env -i \
+  PATH="$PATH" \
+  HOME="${HOME:-/tmp}" \
+  CODEX_HOME="$CODEX_HOME" \
+  codex \
   --ask-for-approval never \
   --sandbox read-only \
+  --disable shell_tool \
+  --disable unified_exec \
+  --disable view_image \
+  --disable image_generation \
+  --disable browser_use \
+  --disable apps \
+  --disable multi_agent \
   exec \
   --ephemeral \
   --ignore-user-config \
   --strict-config \
-  --cd "${GITHUB_WORKSPACE:-$PWD}" \
+  --cd "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" \
+  --skip-git-repo-check \
   --json \
   --output-last-message "$last_message" \
   ${model_args[@]+"${model_args[@]}"} \

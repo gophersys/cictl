@@ -13,7 +13,7 @@
 # `uses:` line, into ${{ github.action_path }}. So the source on disk IS the
 # pinned commit. There is no `git fetch`, no context variable and no pin guard,
 # because there is nothing left to verify: running `$GITHUB_ACTION_PATH/review.sh`
-# is running the commit the caller asked for. review.sh already resolves CLAUDE.md
+# is running the commit the caller asked for. review.sh resolves REVIEW.md
 # beside itself, so the instructions are that same commit too.
 #
 # THE CALLER IS GENERATED. `cictl generate` renders .github/workflows/pr-review.yml
@@ -41,7 +41,7 @@ inputs:
       The selected harness model. Claude uses `opus` or `sonnet`; Codex accepts
       `default` or an explicit model identifier.
     required: false
-    default: opus
+    default: default
   budget-usd:
     description: >-
       Claude's per-round spend ceiling, in whole US dollars. ChatGPT-managed
