@@ -188,9 +188,9 @@ run_review() {
     if [ "$seen" -eq 1 ]; then args+=("$a"); else envs+=("$a"); fi
   done
   set +e
-  env -i PATH="$SB/bin" HOME="$SB/home" REVIEW_STREAM_FILE="$SB/stream.jsonl" \
+  (cd "$SB" && env -i PATH="$SB/bin" HOME="$SB/home" REVIEW_STREAM_FILE="$SB/stream.jsonl" \
     ${envs[@]+"${envs[@]}"} \
-    "$SB/bin/bash" "$SB/review/review.sh" ${args[@]+"${args[@]}"} \
+    "$SB/bin/bash" "$SB/review/review.sh" ${args[@]+"${args[@]}"}) \
     > "$SB/stdout" 2> "$SB/stderr"
   RC=$?
   set -e
@@ -238,11 +238,13 @@ t_openai_api_key_is_refused() {
 
 t_codex_posts_the_same_verdict_contract() {
   local sb; sb="$(new_sandbox)"
+  printf 'package example\n\nvar x = 1\n' > "$sb/x.go"
   run_review "$sb" REVIEW_HARNESS=codex REVIEW_MODEL=default CODEX_HOME="$sb/home" GH_TOKEN=gh-token-stub -- 1
   assert_rc_zero
   assert_comment_posted
   grep -q APPROVE "$SB/posted_body" || fail "Codex output was not posted"
   grep -q 'login status' "$SB/calls/codex.log" || fail "Codex membership auth was not checked"
+  grep -q 'FULL CHANGED FILE: x.go' "$SB/prompt_seen" || fail "Codex did not receive the bounded full changed file"
 }
 
 # --------------------------------------------------------------------------

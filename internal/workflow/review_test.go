@@ -43,6 +43,9 @@ func TestRender_TheCallerSelectsCodex(t *testing.T) {
 	if !strings.Contains(body, "harness: codex") {
 		t.Fatalf("generated caller did not select Codex:\n%s", body)
 	}
+	if !strings.Contains(body, "model: default") || strings.Contains(body, "model: opus") {
+		t.Fatalf("generated Codex caller carried a Claude model:\n%s", body)
+	}
 }
 
 // TestRender_NoReviewBlockRendersThreeFiles is the compatibility floor. Every

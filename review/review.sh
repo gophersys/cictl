@@ -185,6 +185,33 @@ fi
   printf 'THE DIFF:\n%s\n' "$(cat "$diff_file")"
 } > "$prompt_file"
 
+# Codex CI deliberately has no shell or network tools, so runner credentials are
+# outside the model's reach. Supply bounded full-file context from the parent
+# process instead. Paths come from the already-fetched diff, must remain relative,
+# and are capped so one generated file cannot consume the entire context window.
+if [ "$HARNESS" = "codex" ]; then
+  context_bytes=0
+  while IFS= read -r diff_line; do
+    case "$diff_line" in
+      '+++ b/'*) context_path="${diff_line#+++ b/}" ;;
+      *) continue ;;
+    esac
+    case "$context_path" in /*|*'..'*) continue ;; esac
+    [ -f "$context_path" ] && [ ! -L "$context_path" ] || continue
+    file_bytes="$(wc -c < "$context_path")"
+    [ "$file_bytes" -le 262144 ] || continue
+    [ "$(( context_bytes + file_bytes ))" -le 1048576 ] || continue
+    grep -Iq . "$context_path" || continue
+    {
+      printf '\nFULL CHANGED FILE: %s\n```\n' "$context_path"
+      cat "$context_path"
+      printf '\n```\n'
+    } >> "$prompt_file"
+    context_bytes=$(( context_bytes + file_bytes ))
+  done < "$diff_file"
+  log "Codex context: ${context_bytes} bytes of full changed files (1 MiB total, 256 KiB/file caps)"
+fi
+
 # --max-budget-usd is the real ceiling, not a proxy. --permission-mode default
 # keeps the agent from editing anything: it reads and reports.
 #

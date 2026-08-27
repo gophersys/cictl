@@ -120,7 +120,11 @@ func renderReview(c *contract.Contract) (string, error) {
 		harness = contract.ReviewHarnessClaude
 	}
 	fmt.Fprintf(&b, "          harness: %s\n", harness)
-	fmt.Fprintf(&b, "          model: %s\n", preset.Model)
+	model := preset.Model
+	if harness == contract.ReviewHarnessCodex {
+		model = "default"
+	}
+	fmt.Fprintf(&b, "          model: %s\n", model)
 	fmt.Fprintf(&b, "          budget-usd: %q\n", strconv.Itoa(preset.BudgetUsd))
 	fmt.Fprintf(&b, "          max-rounds: %q\n", strconv.Itoa(preset.MaxRounds))
 	fmt.Fprintf(&b, "          stream-store: %s\n", r.StreamStore)
