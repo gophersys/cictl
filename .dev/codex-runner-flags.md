@@ -1,6 +1,6 @@
 # codex-runner-flags
 
-phase: plan
+phase: verify
 repo: gophersys/cictl
 branch: fix/codex-runner-flags
 worktree: ~/code/.worktrees/cictl-codex-runner-flags
@@ -42,6 +42,17 @@ review prompt or verdict changes, no Claude adapter changes.
 - The deployed cloud image pins Codex 0.146.0. A real 0.146.0 `features list`
   exposes `shell_tool`, `unified_exec`, `image_generation`, `browser_use`, `apps`,
   and `multi_agent`, but not `view_image`.
+- RED — `npm exec --yes --package=@openai/codex@0.146.0 -- bash
+  review/run-codex_test.sh`: exit 1 with
+  `installed Codex has no feature named view_image` after strengthening the test
+  to validate every disabled feature against the real deployed CLI version.
+- GREEN — the same real 0.146.0 command exits 0 with `run-codex-test: OK` after
+  removing only the unsupported `view_image` disable flag.
+- `shellcheck -S style review/run-codex.sh review/run-codex_test.sh` and
+  `git diff --check`: exit 0, silent.
+- `bash ./ctl.sh gate`: exit 0 after build, strict shell/action/Go lint, race tests,
+  all 45 reviewer guards with mutation proof, real Codex conformance, and all
+  eight composite-action assertions with discrimination proof.
 
 ## Blocked
 
@@ -49,4 +60,4 @@ review prompt or verdict changes, no Claude adapter changes.
 
 ## Next
 
-Strengthen conformance and prove the current command red against Codex 0.146.0.
+Run an independent read-only review, then submit the pull request.

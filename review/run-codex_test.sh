@@ -63,6 +63,10 @@ exec_help="$("$REAL_CODEX" exec --help)"
 features="$("$REAL_CODEX" features list)"
 grep -q -- '--ask-for-approval' <<< "$codex_help" || fail "installed Codex has no approval-policy flag"
 grep -q -- '--ignore-user-config' <<< "$exec_help" || fail "installed Codex has no isolated-config flag"
-grep -q '^shell_tool[[:space:]]' <<< "$features" || fail "installed Codex cannot disable its shell tool"
+disabled_features="$(sed -n 's/^[[:space:]]*--disable \([^[:space:]\\]*\).*/\1/p' "$HERE/run-codex.sh")"
+while IFS= read -r feature; do
+  [[ -n "$feature" ]] || continue
+  grep -q "^${feature}[[:space:]]" <<< "$features" || fail "installed Codex has no feature named $feature"
+done <<< "$disabled_features"
 
 printf 'run-codex-test: OK\n'
