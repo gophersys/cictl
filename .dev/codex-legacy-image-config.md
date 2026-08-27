@@ -1,11 +1,11 @@
 # codex-legacy-image-config
 
-phase: wait
+phase: fix
 repo: gophersys/cictl
 branch: fix/codex-legacy-image-config
 worktree: ~/code/.worktrees/cictl-codex-legacy-image-config
 pr: 28
-attempt: 0/2
+attempt: 1/2
 
 ## Goal
 
@@ -42,6 +42,12 @@ and independently denies every feature-backed tool.
   image-disable key loaded without inference or credentials.
 - ShellCheck, `git diff --check`, and the full `bash ./ctl.sh gate` exit 0; all 45
   reviewer guards and eight action assertions retain their mutation proof.
+- Independent review proved the non-strict parser check vacuous: 0.146.0 accepts
+  arbitrary unknown keys the same way, so it did not prove `view_image` was
+  disabled. The finding is valid. The fix restores strict config, removes the
+  unsupported key, and documents the pinned CLI's read-only image handler as an
+  explicit capability difference; every executable/network/agent feature remains
+  denied.
 
 ## Blocked
 
@@ -49,4 +55,4 @@ and independently denies every feature-backed tool.
 
 ## Next
 
-Poll pull request 28, inspect the remote gate, and receive independent review.
+Run targeted and full gates, then request rereview.

@@ -29,7 +29,6 @@ env -i \
   codex \
   --ask-for-approval never \
   --sandbox read-only \
-  --config tools.view_image=false \
   --disable shell_tool \
   --disable unified_exec \
   --disable image_generation \
@@ -39,6 +38,7 @@ env -i \
   exec \
   --ephemeral \
   --ignore-user-config \
+  --strict-config \
   --cd "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" \
   --skip-git-repo-check \
   --json \
