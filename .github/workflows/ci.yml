@@ -47,5 +47,9 @@ jobs:
           # YAML, and a lint that changes under you is a gate that changes under
           # you. It is also the only linter that reports a duplicate key.
           go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          # The reviewer gate exercises the real CLI's automation surface without
+          # authenticating or making a provider call. Keep this aligned with the
+          # version installed in the private review-runner image.
+          npm install --global @openai/codex@0.150.1
       - name: ctl.sh gate
         run: bash ./ctl.sh gate
